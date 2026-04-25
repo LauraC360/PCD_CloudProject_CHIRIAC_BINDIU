@@ -1,0 +1,13 @@
+{
+  "name": "websocket-gateway",
+  "version": "1.0.0",
+  "description": "WebSocket Gateway — pushes real-time stats updates to browser clients",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "jest"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

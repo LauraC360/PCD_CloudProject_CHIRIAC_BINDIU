@@ -1,0 +1,96 @@
+# ---- Dependencies ------------
+node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# ---- Environment variables ------------
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+.env.*.local
+*.env
+
+# ---- Build artifacts ------------ 
+dist/
+build/
+out/
+.next/
+.nuxt/
+.cache/
+*.tgz
+*.tar.gz
+
+# Lambda deployment packages
+*.zip
+function.zip
+event-processor/function.zip
+
+# Coverage output
+coverage/
+**/coverage/
+.nyc_output/
+lcov.info
+*.lcov
+
+# ---- AWS credentials and config ------------  
+.aws/
+.aws/credentials
+.aws/config
+credentials
+aws-exports.js
+amplify/
+*-credentials.json
+*-key.json
+*.pem
+*.p12
+*.pfx
+
+# ---- Logs ------------  
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ---- Runtime / temp files ------------  
+pids/
+*.pid
+*.seed
+*.pid.lock
+.node_repl_history
+*.tsbuildinfo
+
+# ---- Test artifacts ------------ 
+.jest-cache/
+junit.xml
+test-results/
+artillery-report*.json
+artillery-report*.html
+
+# ---- Editor and OS files ------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/settings.json
+.vscode/*.code-workspace
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- Docker ------------
+.dockerignore.local
+
+# ---- Misc ------------ 
+.eslintcache
+.stylelintcache
+.parcel-cache/

@@ -1,0 +1,19 @@
+{
+  "name": "realtime-analytics-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Realtime Analytics Dashboard — monorepo for Service A, Event Processor, and WebSocket Gateway",
+  "workspaces": [
+    "service-a",
+    "event-processor",
+    "websocket-gateway"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
