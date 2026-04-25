@@ -1,0 +1,12 @@
+{
+  "name": "event-processor",
+  "version": "1.0.0",
+  "description": "AWS Lambda function — processes SQS view events and updates DynamoDB",
+  "main": "src/handler.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

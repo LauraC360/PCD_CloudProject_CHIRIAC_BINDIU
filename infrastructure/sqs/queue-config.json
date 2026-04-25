@@ -1,0 +1,17 @@
+{
+  "QueueName": "view-events",
+  "Attributes": {
+    "VisibilityTimeout": "60",
+    "MessageRetentionPeriod": "86400",
+    "RedrivePolicy": {
+      "maxReceiveCount": 3,
+      "deadLetterTargetArn": "arn:aws:sqs:<region>:<account-id>:view-events-dlq"
+    }
+  },
+  "_notes": {
+    "VisibilityTimeout": "60 seconds — gives the Lambda function enough time to process a batch before the message becomes visible again (Lambda timeout is 30s, so 60s provides a safety margin).",
+    "MessageRetentionPeriod": "86400 seconds (24 hours) — messages not processed within 24 hours are discarded.",
+    "maxReceiveCount": "3 — a message is retried up to 3 times before being routed to view-events-dlq (satisfies Requirement 8.4).",
+    "deadLetterTargetArn": "Replace <region> and <account-id> with actual values, or use the output of create-queues.sh."
+  }
+}
