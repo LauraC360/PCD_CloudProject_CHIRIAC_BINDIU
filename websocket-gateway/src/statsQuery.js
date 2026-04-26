@@ -9,16 +9,7 @@ const tableName = process.env.DYNAMODB_TABLE_STATS || 'MovieStats';
 const dynamoClient = new DynamoDBClient({ region });
 const docClient = DynamoDBDocumentClient.from(dynamoClient);
 
-/**
- * Queries the MovieStats GSI (`viewCount-index`) for the top 10 movies
- * sorted by viewCount descending.
- *
- * The GSI uses a fixed partition key `pk = 'STATS'` (written by the Event
- * Processor on every UpdateItem) so that all movie stats items are
- * co-located under a single GSI partition, enabling a sorted Query.
- *
- * @returns {Promise<Array<{ movieId: string, viewCount: number, lastViewedAt: string }>>}
- */
+// Queries the MovieStats GSI (viewCount-index) for the top 10 movies
 async function queryTop10() {
   const command = new QueryCommand({
     TableName: tableName,

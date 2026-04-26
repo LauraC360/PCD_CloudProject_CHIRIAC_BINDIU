@@ -2,22 +2,9 @@
 
 const WebSocket = require('ws');
 
-/**
- * ConnectionManager wraps the native `wss.clients` Set from the `ws` library,
- * providing broadcast and connection count utilities.
- *
- * Usage:
- *   const manager = createConnectionManager(wss);
- *   manager.broadcast(JSON.stringify({ type: 'stats_update', ... }));
- *   manager.getCount(); // number of open connections
- */
+// ConnectionManager wraps the native provides broadcast and connection count utilities
 function createConnectionManager(wss) {
-  /**
-   * Broadcast a message string to all currently open WebSocket clients.
-   * Clients whose readyState is not OPEN are silently skipped.
-   *
-   * @param {string} message - Serialised message to send (typically JSON).
-   */
+  // broadcast message to all sockets
   function broadcast(message) {
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
@@ -26,12 +13,7 @@ function createConnectionManager(wss) {
     });
   }
 
-  /**
-   * Returns the total number of clients tracked by the ws server,
-   * regardless of their readyState.
-   *
-   * @returns {number}
-   */
+  // Returns the total number of clients tracked by the ws server
   function getCount() {
     return wss.clients.size;
   }
