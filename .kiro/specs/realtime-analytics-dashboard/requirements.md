@@ -61,7 +61,7 @@ This document defines the requirements for Project 1 — Real-Time Analytics Das
 3. THE Event_Processor SHALL write aggregated counts to MovieStats using a DynamoDB `UpdateExpression` with an atomic `ADD` operation, without performing a read before the write.
 4. IF a single message in a Batch fails processing, THEN THE Event_Processor SHALL report that message as a failure using `ReportBatchItemFailures` so that only the failed message is returned to SQS_Queue, not the entire Batch.
 5. THE Event_Processor SHALL have a maximum execution timeout of 30 seconds.
-6. FOR each successfully processed (non-duplicate) View_Event, THE Event_Processor SHALL write a record to the `RecentActivity` table containing `pk = "ACTIVITY"`, `viewedAt = publishedAt` (epoch ms), `movieId`, and `ttl = now + 86400`.
+6. FOR each successfully processed (non-duplicate) View_Event, THE Event_Processor SHALL write a record to the `RecentActivity` table containing `pk = "ACTIVITY#<YYYY-MM-DD>"` (UTC date at processing time), `viewedAt = publishedAt` (epoch ms), `movieId`, `title`, and `ttl = now + 86400`.
 7. WHEN all messages in a Batch are processed successfully, THE Event_Processor SHALL send an HTTP POST notification to WebSocket_Gateway via its AWS Cloud Map DNS name (e.g. `http://wsg.local:8081/internal/notify`) containing the updated view counts. Lambda and the WSG SHALL be in the same VPC. Cloud Map provides a stable DNS name that survives task restarts without requiring a load balancer.
 
 ---
@@ -76,7 +76,7 @@ This document defines the requirements for Project 1 — Real-Time Analytics Das
 2. THE `MovieStats` table SHALL store a `viewCount` attribute (number) per item, incremented atomically by Event_Processor.
 3. WHEN Event_Processor performs a concurrent `ADD` on the same `movieId` from multiple Lambda instances, THE `MovieStats` table SHALL reflect the correct total count without data loss.
 4. A `MovieStats` GSI with partition key `pk = "STATS"` (fixed string on every item) and sort key `viewCount` (number) SHALL enable the gateway to query the top-10 movies sorted by view count descending. The GSI projection SHALL include `movieId`, `viewCount`, and `title`.
-5. A separate `RecentActivity` table SHALL store individual view events with partition key `pk = "ACTIVITY"` (fixed), sort key `viewedAt` (epoch ms), and attributes `movieId` and `title`.
+5. A separate `RecentActivity` table SHALL store individual view events with partition key `pk = "ACTIVITY#<YYYY-MM-DD>"` (UTC date, day-scoped to avoid hot partitions), sort key `viewedAt` (epoch ms), and attributes `movieId` and `title`.
 6. THE `RecentActivity` table SHALL have a TTL of 86400 seconds (1 day) on each item — entries older than 24 hours are automatically deleted by DynamoDB.
 7. THE gateway SHALL query `RecentActivity` with `ScanIndexForward: false` and `Limit: 20` to get the 20 most recent view events for the activity feed.
 8. THE `ProcessedEvents` table SHALL use `requestId` (string) as the partition key, with a `ttl` attribute (Unix epoch seconds) for automatic expiry after 24 hours.
@@ -126,12 +126,12 @@ This document defines the requirements for Project 1 — Real-Time Analytics Das
 #### Acceptance Criteria
 
 1. THE system SHALL propagate a View_Event from Fast_Lazy_Bee through SQS_Queue, Event_Processor, MovieStats, and WebSocket_Gateway to the Dashboard within a measurable and recordable time window under normal load.
-2. THE caller (load testing tool or demo UI) SHALL stamp `requestedAt` (epoch ms) in the `X-Requested-At` request header. Fast_Lazy_Bee SHALL pass this value as `publishedAt` in the SQS message. If the header is absent, Fast_Lazy_Bee falls back to `Date.now()`.
-3. THE WebSocket_Gateway SHALL stamp `deliveredAt = Date.now()` immediately before sending each `stats_update` and compute `latencyMs = deliveredAt - publishedAt` per event.
-4. THE WebSocket_Gateway SHALL always maintain a rolling 60-second window of `latencyMs` samples and compute p50, p95, p99 percentiles server-side. These SHALL be included in every `stats_update` payload. The UI SHALL NOT perform any latency calculations.
+2. THE caller (load testing tool or demo UI) SHALL stamp `publishedAt` (epoch ms) in the `X-Requested-At` request header. Fast_Lazy_Bee SHALL pass this value as `publishedAt` in the SQS message. If the header is absent, Fast_Lazy_Bee falls back to `Date.now()`.
+3. THE WebSocket_Gateway SHALL stamp `ts = Date.now()` (epoch ms) immediately before sending each `stats_update` and include it in the payload.
+4. THE WebSocket_Gateway SHALL compute `latencyMs = ts - publishedAt` per notification, maintain a rolling 60-second window of samples, derive p50, p95, p99 percentiles server-side, and publish them to CloudWatch as `EndToEndLatencyP50`, `EndToEndLatencyP95`, `EndToEndLatencyP99` under the `AnalyticsDashboard` namespace. These metrics flow to the Dashboard via the existing 5-second `GetMetricData` poll and are rendered from `systemMetrics.gateway` — no latency calculations in the browser.
 5. THE Event_Processor SHALL emit a CloudWatch metric for processing duration per Batch invocation.
 
-> **Bonus (if time permits):** Implement a full 2-step round-trip — browser stamps `receivedAt` on receiving the WebSocket push and sends it back via a `latency_ack` message. Gateway computes `fullLatencyMs = receivedAt - publishedAt` and recomputes p50/p95/p99 from full latency samples.
+> **Bonus (if time permits):** Implement a full 2-step round-trip — browser stamps `receivedAt` on receiving the WebSocket push and sends it back to the Gateway via a `latency_ack` message. Gateway computes `fullLatencyMs = receivedAt - publishedAt` and publishes it as a separate CloudWatch metric `FullRoundTripLatency`.
 
 ---
 
@@ -271,7 +271,7 @@ README.md               ← root build/deploy/test instructions
    - `DynamoWriteErrors` — count of failed DynamoDB write attempts per batch
 
 4. **WebSocket_Gateway** SHALL publish:
-   - `EndToEndLatencyP50`, `EndToEndLatencyP95`, `EndToEndLatencyP99` — percentiles from the rolling 60-second window (ms)
+   - `EndToEndLatencyP50`, `EndToEndLatencyP95`, `EndToEndLatencyP99` — percentiles computed server-side from a rolling 60-second window of `latencyMs = ts - publishedAt` samples (ms)
    - `ConnectedClients` — current WebSocket connection count
    - `ViewEventsPerSecond` — throughput of incoming Lambda notifications
    - `BackpressureActive` — 0 or 1
@@ -360,7 +360,6 @@ All time-series charts use epoch ms timestamps on the x-axis (provided by the ga
   "recentActivity": [
     { "movieId": "tt0111161", "title": "The Shawshank Redemption", "viewedAt": 1745678901000 }
   ],
-  "latency": { "p50": 120, "p95": 340, "p99": 580 },
   "systemMetrics": {
     "history": [
       {
@@ -368,7 +367,7 @@ All time-series charts use epoch ms timestamps on the x-axis (provided by the ga
         "lambda": { "invocations": 45, "errors": 0, "avgDurationMs": 180 },
         "sqs": { "queueDepth": 2, "messagesSent": 45 },
         "serviceA": { "cpuPercent": 12, "memoryPercent": 34 },
-        "gateway": { "connectedClients": 3, "viewEventsPerSecond": 8, "backpressureActive": false }
+        "gateway": { "connectedClients": 3, "viewEventsPerSecond": 8, "backpressureActive": false, "latencyP50": 120, "latencyP95": 340, "latencyP99": 580 }
       }
     ]
   }
@@ -385,7 +384,6 @@ All time-series charts use epoch ms timestamps on the x-axis (provided by the ga
 {
   "type": "stats_update",
   "ts": 1745678901234,
-  "publishedAt": 1745678900900,
   "connectedClients": 3,
   "top10": [
     { "movieId": "tt0111161", "title": "The Shawshank Redemption", "viewCount": 4822 }
@@ -394,13 +392,12 @@ All time-series charts use epoch ms timestamps on the x-axis (provided by the ga
   "recentActivity": [
     { "movieId": "tt0111161", "title": "The Shawshank Redemption", "viewedAt": 1745678901000 }
   ],
-  "latency": { "p50": 122, "p95": 345, "p99": 590 },
   "systemMetrics": {
     "ts": 1745678901234,
     "lambda": { "invocations": 46, "errors": 0, "avgDurationMs": 182 },
     "sqs": { "queueDepth": 0, "messagesSent": 46 },
     "serviceA": { "cpuPercent": 13, "memoryPercent": 34 },
-    "gateway": { "connectedClients": 3, "viewEventsPerSecond": 9, "backpressureActive": false }
+    "gateway": { "connectedClients": 3, "viewEventsPerSecond": 9, "backpressureActive": false, "latencyP50": 122, "latencyP95": 345, "latencyP99": 590 }
   }
 }
 ```

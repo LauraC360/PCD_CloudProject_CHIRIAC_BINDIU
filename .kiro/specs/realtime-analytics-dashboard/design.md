@@ -21,7 +21,7 @@ Supporting AWS services: SQS (two queues), DynamoDB (three tables), CloudWatch L
 - **Reliable processing**: SQS + Lambda retry semantics + DLQ guarantee at-least-once delivery with idempotency guards.
 - **Real-time delivery**: WebSocket push from Gateway to all connected clients within 500 ms of a DynamoDB write.
 - **Backpressure safety**: When event rate exceeds 100/s, the Gateway coalesces updates to at most 1 push/s per client.
-- **End-to-end latency visibility**: `publishedAt` timestamp (epoch ms) embedded in every View_Event; Gateway stamps `ts` (epoch ms) before each push and computes p50/p95/p99 server-side from a rolling 60-second window; the frontend only renders the values it receives.
+- **End-to-end latency visibility**: `publishedAt` (epoch ms) stamped by the caller via `X-Requested-At`, carried through SQS to the Gateway; Gateway stamps `ts`, computes `latencyMs = ts - publishedAt`, maintains a rolling 60-second window, derives p50/p95/p99, and publishes them to CloudWatch. They reach the UI through the existing 5-second `GetMetricData` poll — durable across gateway restarts, zero browser-side calculations.
 
 ---
 
@@ -75,10 +75,13 @@ When the incoming notification rate exceeds 100 events/second, the Gateway activ
 
 #### 6. End-to-end latency tracking
 
-- `publishedAt`: epoch ms timestamp added by Service A to every View_Event at the moment of SQS publish (read from `X-Requested-At` header if present, otherwise `Date.now()`).
-- `ts`: epoch ms timestamp added by the Gateway to every `stats_update` message immediately before the WebSocket send.
-- The Gateway computes `latencyMs = ts - publishedAt` for each event and maintains a rolling array of samples within the last 60 seconds. p50/p95/p99 are derived server-side using index-based percentile selection and included in every `stats_update` payload under `latency: { p50, p95, p99 }`.
-- The frontend does **not** perform any latency calculations — it only renders the values provided by the Gateway.
+- `publishedAt`: epoch ms stamped by the **caller** (browser or Artillery) in the `X-Requested-At` request header. Service A reads this and passes it as `publishedAt` in the SQS message. If the header is absent, Service A falls back to `Date.now()`.
+- `ts`: epoch ms stamped by the **Gateway** immediately before sending each `stats_update` — this is the delivery timestamp.
+- The **Gateway** computes `latencyMs = ts - publishedAt` on each `/internal/notify`, maintains a rolling 60-second window of samples, derives p50/p95/p99 server-side, and publishes them to CloudWatch as `EndToEndLatencyP50`, `EndToEndLatencyP95`, `EndToEndLatencyP99` under the `AnalyticsDashboard` namespace.
+- These percentiles flow back to the UI through the existing 5-second `GetMetricData` poll, arriving in `systemMetrics.gateway` alongside `connectedClients`, `viewEventsPerSecond`, and `backpressureActive`. The browser does **no latency calculations** — it only renders what it receives.
+- **Durability**: because the percentiles live in CloudWatch (not in-memory), a gateway restart does not lose latency history. On restart, the `GetMetricData` poll immediately recovers the last hour of data and the `initial_state` sent to reconnecting clients is complete.
+
+> **Bonus (if time permits):** Full round-trip `latency_ack` — browser stamps `receivedAt` on receiving the push and sends it back to the Gateway. Gateway computes `fullLatencyMs = receivedAt - publishedAt` and publishes it as a separate CloudWatch metric `FullRoundTripLatency`.
 
 ### Cost Protection
 
@@ -167,7 +170,7 @@ sequenceDiagram
     end
 
     loop For each non-duplicate event
-        L->>RA: PutItem(pk="ACTIVITY", viewedAt=publishedAt, movieId, title, ttl=now+86400)
+        L->>RA: PutItem(pk="ACTIVITY#<today>", viewedAt=publishedAt, movieId, title, ttl=now+86400)
         RA-->>L: OK
     end
 
@@ -176,8 +179,8 @@ sequenceDiagram
     MS-->>GW: top-10 items
     GW->>RA: Query recent activity (Limit 20, ScanIndexForward false)
     RA-->>GW: recent activity items
-    GW->>GW: stamp ts = Date.now(), compute latency p50/p95/p99
-    GW-->>C: WebSocket push stats_update { top10, recentActivity, latency, connectedClients, ts, publishedAt, systemMetrics }
+    GW->>GW: stamp ts = Date.now()
+    GW-->>C: WebSocket push stats_update { top10, recentActivity, connectedClients, ts, publishedAt, systemMetrics }
 
     L->>L: Publish CloudWatch Metrics (BatchProcessingDuration, DuplicatesSkipped, DynamoWriteErrors)
 ```
@@ -230,27 +233,28 @@ service-a/src/
 The `fetchMovie` handler already calls `this.dataStore.fetchMovie(params.movie_id)`, which throws a 404 via `genNotFoundError` when the movie is not found. The SQS publish is registered as an `onResponse` hook so it fires **after** the HTTP response is sent to the client. This guarantees the response is never delayed by the SQS call, and only 2xx responses trigger a publish (Req 1.5).
 
 ```typescript
-// In movie-id-routes.ts — register onResponse hook after fetchMovie succeeds
-const movie = await this.dataStore.fetchMovie(params.movie_id);
-reply.code(HttpStatusCodes.OK).send(movie);
-
-// onResponse hook fires after the response is sent — truly fire-and-forget
-reply.raw.on('finish', () => {
+// In movie-id-routes.ts — register a Fastify onResponse hook on the route
+fastify.addHook('onResponse', async (request, reply) => {
   if (reply.statusCode >= 200 && reply.statusCode < 300) {
-    this.sqsPublisher.publish({
-      schemaVersion: '1.0',
-      requestId: crypto.randomUUID(),
-      movieId: params.movie_id,
-      title: movie.title,
-      publishedAt: Number(request.headers['x-requested-at']) || Date.now()
-    });
+    const movie = (reply as any).locals?.movie;
+    if (movie) {
+      this.sqsPublisher.publish({
+        schemaVersion: '1.0',
+        requestId: crypto.randomUUID(),
+        movieId: request.params.movie_id,
+        title: movie.title,
+        publishedAt: Number(request.headers['x-requested-at']) || Date.now()
+      });
+    }
   }
 });
 ```
 
+> **Implementation note**: The current code snippet uses `reply.raw.on('finish', ...)` which bypasses Fastify's hook lifecycle and won't benefit from Fastify's error handling. The correct approach is to use Fastify's built-in `onResponse` hook via `fastify.addHook('onResponse', handler)` (registered at route or plugin scope). This fires after the response is fully sent, is properly managed by Fastify's lifecycle, and handles errors consistently. The movie object should be stashed on `reply.locals` (or equivalent) by the handler before calling `reply.send()` so the hook can access it.
+
 This placement ensures:
-- 404 responses (movie not found) never trigger a publish — `genNotFoundError` throws before the hook is registered.
-- The HTTP response is never delayed by the SQS call — the hook fires after `reply.send()` completes.
+- 404 responses (movie not found) never trigger a publish — `genNotFoundError` throws before `reply.send()` is called, so `onResponse` never fires for error paths.
+- The HTTP response is never delayed by the SQS call — `onResponse` fires after the response is fully sent.
 
 **Environment variables** (added to `src/schemas/dotenv.ts` TypeBox schema):
 
@@ -304,9 +308,10 @@ Default port is **3000** (`APP_PORT=3000` in `.env.sample`; the Docker host port
 1. Parse all `View_Event` records from the SQS batch.
 2. For each event, perform a conditional `PutItem` on `ProcessedEvents` with `ConditionExpression: attribute_not_exists(requestId)`.
    - If `ConditionalCheckFailedException` → mark as duplicate, skip from aggregation.
+   - **Ordering note**: idempotency checks run first across all events before any aggregation begins. This ensures that if the same `requestId` appears multiple times within a single batch (SQS can redeliver within a batch), only the first occurrence passes the condition — the rest are marked as duplicates and excluded from the aggregated delta. Aggregation only operates on the confirmed-new set.
 3. Aggregate view counts by `movieId` across all non-duplicate events in the batch (e.g. 3 events for movie A + 2 for movie B → `{ "movieA": 3, "movieB": 2 }`).
 4. For each `movieId` in the aggregated map, perform one `UpdateItem` on `MovieStats`: `ADD viewCount :delta SET lastViewedAt = :ts, updatedAt = :now` where `:delta` is the aggregated count.
-5. For each non-duplicate event, `PutItem` on `RecentActivity`: `{ pk: "ACTIVITY", viewedAt: publishedAt, movieId, title, ttl: Math.floor(Date.now()/1000) + 86400 }`.
+5. For each non-duplicate event, `PutItem` on `RecentActivity`: `{ pk: "ACTIVITY#<YYYY-MM-DD>", viewedAt: publishedAt, movieId, title, ttl: Math.floor(Date.now()/1000) + 86400 }` where the date is the UTC date at processing time.
 6. After all writes succeed, send ONE HTTP POST notification to the Gateway with the aggregated results: `POST /internal/notify { updates: [{ movieId, delta, publishedAt }, ...] }` — includes `X-Internal-Secret` header. This single notification is sent once per batch, not once per event.
 7. Emit CloudWatch Metrics: `BatchProcessingDuration` (ms), `DuplicatesSkipped` (count), `DynamoWriteErrors` (count).
 
@@ -329,7 +334,7 @@ Default port is **3000** (`APP_PORT=3000` in `.env.sample`; the Docker host port
 | HTTP POST | `/internal/notify` | Receives notification from Lambda (internal port 8081, protected by `X-Internal-Secret` header) |
 
 **Connection lifecycle**:
-- `onopen`: Validate Cognito JWT (reject with 401 if invalid); add client to `connections` Map; query DynamoDB top-10 and RecentActivity; send `initial_state` message (includes `latency`, `recentActivity`, `systemMetrics.history`); broadcast updated `connectedClients` count.
+- `onopen`: Validate Cognito JWT (reject with 401 if invalid); add client to `connections` Map; query DynamoDB top-10 and RecentActivity; send `initial_state` message (includes `recentActivity`, `systemMetrics.history` with latency percentiles embedded in `gateway` field); broadcast updated `connectedClients` count.
 - `onclose` / `onerror`: Remove client from `connections`; broadcast updated `connectedClients` count.
 
 **Ping/pong keepalive**: Every 30 seconds the Gateway sends a WebSocket ping frame to all connected clients. Clients that do not respond with a pong within the next ping interval are removed from the active set. This keeps connections alive through the ALB idle timeout.
@@ -339,7 +344,15 @@ Default port is **3000** (`APP_PORT=3000` in `.env.sample`; the Docker host port
 2. Receive `{ updates: [{ movieId, delta, publishedAt }, ...] }` — one entry per unique `movieId` in the processed batch.
 3. Use the `publishedAt` from the earliest event in the batch for end-to-end latency calculation.
 4. If backpressure is active (event rate > 100/s): enqueue update; coalesced push fires at most 1/s per client.
-5. Otherwise: query DynamoDB top-10 and RecentActivity immediately; stamp `ts = Date.now()`; compute `latencyMs = ts - publishedAt`; update rolling 60s latency window; compute p50/p95/p99; attach latest `systemMetrics` data point; broadcast ONE `stats_update` to all clients.
+5. Otherwise: serve top-10 and RecentActivity from in-memory cache (see below); stamp `ts = Date.now()`; compute `latencyMs = ts - publishedAt`; update rolling 60s latency window; compute p50/p95/p99; store latest percentiles in memory for the next scheduled `PutMetricData` flush; attach latest `systemMetrics` data point; broadcast ONE `stats_update` to all clients.
+
+**CloudWatch latency metrics flush**:
+The Gateway does NOT call `PutMetricData` on every `/internal/notify`. Instead, a separate 30-second interval timer flushes the latest computed p50/p95/p99 values to CloudWatch as `EndToEndLatencyP50`, `EndToEndLatencyP95`, `EndToEndLatencyP99`. This avoids paying for ~20 redundant `PutMetricData` calls per second under load (CloudWatch standard resolution has 1-second minimum granularity anyway, so per-notify calls would just overwrite the same bucket). The 30-second flush interval is configurable via `CLOUDWATCH_METRICS_FLUSH_INTERVAL_MS` (default 30000).
+
+**Top-10 and RecentActivity cache**:
+The Gateway maintains an in-memory cache of the last DynamoDB query results for top-10 (`MovieStats` GSI) and recent activity (`RecentActivity`). The cache is invalidated and refreshed on each `/internal/notify` call, but the DynamoDB queries run asynchronously — the previous cached result is broadcast immediately while the refresh happens in the background. This keeps the notify → broadcast path off the DynamoDB read latency critical path.
+
+> **Design note**: Without caching, every `/internal/notify` call triggers two synchronous DynamoDB reads before broadcasting. Under load testing (200 req/s → batches firing every ~50ms) this puts DynamoDB reads directly on the broadcast critical path and risks exceeding the 500ms delivery budget. A 1-second TTL cache (or stale-while-revalidate pattern) keeps broadcasts fast while keeping data fresh enough for a real-time dashboard.
 
 **CloudWatch metrics polling**:
 - On startup, the Gateway starts a polling loop that calls `GetMetricData` every `CLOUDWATCH_POLL_INTERVAL_MS` (default 5000 ms).
@@ -353,7 +366,7 @@ Default port is **3000** (`APP_PORT=3000` in `.env.sample`; the Docker host port
 - If counter > 100: set `backpressureActive = true`; start a 1-second interval timer that drains the pending update queue.
 - If counter drops ≤ 100 for 3 consecutive seconds: set `backpressureActive = false`; cancel timer.
 
-**Environment variables**: `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `AWS_REGION`, `PORT` (default 8080), `INTERNAL_PORT` (default 8081), `COGNITO_JWKS_URL`, `INTERNAL_SECRET`, `CLOUDWATCH_POLL_INTERVAL_MS` (default 5000).
+**Environment variables**: `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `AWS_REGION`, `PORT` (default 8080), `INTERNAL_PORT` (default 8081), `COGNITO_JWKS_URL`, `INTERNAL_SECRET`, `CLOUDWATCH_POLL_INTERVAL_MS` (default 5000), `CLOUDWATCH_METRICS_FLUSH_INTERVAL_MS` (default 30000).
 
 ---
 
@@ -365,8 +378,8 @@ Default port is **3000** (`APP_PORT=3000` in `.env.sample`; the Docker host port
 
 | Type | Payload | Action |
 |---|---|---|
-| `initial_state` | `{ top10, recentActivity, latency, connectedClients, ts, systemMetrics }` | Full dashboard refresh |
-| `stats_update` | `{ top10, recentActivity, latency, connectedClients, ts, publishedAt, systemMetrics }` | Incremental update — append data points and re-render |
+| `initial_state` | `{ top10, recentActivity, connectedClients, ts, systemMetrics }` | Full dashboard refresh |
+| `stats_update` | `{ top10, recentActivity, connectedClients, ts, systemMetrics }` | Incremental update — append data points and re-render |
 
 **Reconnection strategy**: Exponential backoff starting at 1000 ms, multiplier 2, cap 30 000 ms, max 10 attempts. Display "Reconnecting..." during attempts; display "Connection lost. Please refresh the page." after 10 failures.
 
@@ -377,8 +390,12 @@ Default port is **3000** (`APP_PORT=3000` in `.env.sample`; the Docker host port
 - Recent activity feed — scrollable list rendered as `"<title> — <timestamp>"`
 - Connected users count — single large number display
 
-**Latency Section (bonus):**
-- End-to-end latency p50/p95/p99 — multi-line Chart.js chart (time on x-axis, ms on y-axis, 3 lines); data from `latency` field in `stats_update`
+**Latency chart**:
+- Latency percentiles (p50/p95/p99) arrive in `systemMetrics.gateway.latencyP50/P95/P99` via the 5-second CloudWatch poll — no browser-side calculations.
+- Append `{ ts, latencyP50, latencyP95, latencyP99 }` to the local `latencyHistory` array on each `stats_update`.
+- Render as a multi-line Chart.js chart (time on x-axis, ms on y-axis, 3 lines).
+
+> **Bonus (if time permits):** On receiving each `stats_update`, stamp `receivedAt = Date.now()` and send `{ type: "latency_ack", publishedAt, receivedAt }` back to the Gateway for full round-trip CloudWatch metrics.
 - Throughput (view events/second) — line chart; data from `systemMetrics.gateway.viewEventsPerSecond`
 
 **Service A Section (bonus):**
@@ -465,13 +482,15 @@ No GSI required. Access pattern is always a single-key lookup by `requestId`.
 
 | Attribute | Type | Description |
 |---|---|---|
-| `pk` | String (PK) | Fixed value `"ACTIVITY"` |
+| `pk` | String (PK) | Day-scoped partition key, format `"ACTIVITY#YYYY-MM-DD"` (e.g. `"ACTIVITY#2025-04-26"`) |
 | `viewedAt` | Number (SK) | Epoch ms — equals `publishedAt` from the View_Event |
 | `movieId` | String | Movie that was viewed |
 | `title` | String | Movie title |
 | `ttl` | Number | Unix epoch seconds; DynamoDB TTL attribute (`Math.floor(Date.now()/1000) + 86400`) |
 
-Query pattern: `pk = "ACTIVITY"`, `ScanIndexForward: false`, `Limit: 20` — returns the 20 most recent view events sorted newest-first.
+Query pattern: `pk = "ACTIVITY#<today>"`, `ScanIndexForward: false`, `Limit: 20` — returns the 20 most recent view events for today sorted newest-first.
+
+> **Design note**: Using a fixed `pk = "ACTIVITY"` for all events creates a hot partition — all writes and reads hit the same DynamoDB partition, which becomes a bottleneck under load testing at 200 req/s. Appending the date (`ACTIVITY#YYYY-MM-DD`) distributes writes across daily partitions and keeps each partition's data naturally bounded by the 1-day TTL. The gateway queries today's partition for the activity feed; the TTL handles cleanup automatically.
 
 ---
 
@@ -495,7 +514,6 @@ Query pattern: `pk = "ACTIVITY"`, `ScanIndexForward: false`, `Limit: 20` — ret
 {
   "type": "stats_update",
   "ts":           1745678901234,
-  "publishedAt":  1745678900900,
   "connectedClients": 12,
   "top10": [
     { "movieId": "tt0111161", "title": "The Shawshank Redemption", "viewCount": 4821 },
@@ -504,13 +522,12 @@ Query pattern: `pk = "ACTIVITY"`, `ScanIndexForward: false`, `Limit: 20` — ret
   "recentActivity": [
     { "movieId": "tt0111161", "title": "The Shawshank Redemption", "viewedAt": 1745678901000 }
   ],
-  "latency": { "p50": 122, "p95": 345, "p99": 590 },
   "systemMetrics": {
     "ts": 1745678901234,
     "lambda": { "invocations": 46, "errors": 0, "avgDurationMs": 182 },
     "sqs": { "queueDepth": 0, "messagesSent": 46 },
     "serviceA": { "cpuPercent": 13, "memoryPercent": 34 },
-    "gateway": { "connectedClients": 3, "viewEventsPerSecond": 9, "backpressureActive": false }
+    "gateway": { "connectedClients": 3, "viewEventsPerSecond": 9, "backpressureActive": false, "latencyP50": 122, "latencyP95": 345, "latencyP99": 590 }
   }
 }
 ```
@@ -532,7 +549,6 @@ Query pattern: `pk = "ACTIVITY"`, `ScanIndexForward: false`, `Limit: 20` — ret
   "recentActivity": [
     { "movieId": "tt0111161", "title": "The Shawshank Redemption", "viewedAt": 1745678901000 }
   ],
-  "latency": { "p50": 120, "p95": 340, "p99": 580 },
   "systemMetrics": {
     "history": [
       {
@@ -540,7 +556,7 @@ Query pattern: `pk = "ACTIVITY"`, `ScanIndexForward: false`, `Limit: 20` — ret
         "lambda": { "invocations": 45, "errors": 0, "avgDurationMs": 180 },
         "sqs": { "queueDepth": 2, "messagesSent": 45 },
         "serviceA": { "cpuPercent": 12, "memoryPercent": 34 },
-        "gateway": { "connectedClients": 3, "viewEventsPerSecond": 8, "backpressureActive": false }
+        "gateway": { "connectedClients": 3, "viewEventsPerSecond": 8, "backpressureActive": false, "latencyP50": 120, "latencyP95": 340, "latencyP99": 580 }
       }
     ]
   }
@@ -624,7 +640,7 @@ The system uses **AWS Cognito User Pool** as the identity provider for all user-
 
 *For any* sequence of `stats_update` messages received by a connected client for the same `movieId`, the `viewCount` values SHALL be monotonically non-decreasing — a counter pushed to the client SHALL never be lower than a previously pushed counter for the same movie.
 
-**Validates: Requirements 5.4, 4.2**
+**Validates: Requirements 3.3, 4.2**
 
 ---
 
@@ -683,7 +699,7 @@ The system uses **AWS Cognito User Pool** as the identity provider for all user-
 |---|---|
 | WebSocket `onclose` / `onerror` | Start exponential backoff reconnection |
 | > 10 reconnection failures | Display "Connection lost. Please refresh the page."; stop retrying |
-| `stats_update` missing `latency` field | Skip latency chart update; still update dashboard |
+| `stats_update` missing `systemMetrics` field | Skip system metrics chart update; still update top-10 and activity feed |
 | Malformed JSON from Gateway | Log to console; ignore message |
 
 ---
