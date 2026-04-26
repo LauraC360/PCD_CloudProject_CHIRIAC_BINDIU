@@ -174,29 +174,29 @@ Tasks are ordered by dependency. Each task maps directly to requirements and des
 
 ## Task 7: Frontend — Dashboard
 
-- [ ] 7.1 Create `frontend/index.html` with semantic structure: header with connection status badge, top-movies table, connected-users counter, recent activity feed, latency chart container; load Tailwind CSS and Chart.js from CDN (no build step)
-- [ ] 7.2 Create `frontend/app.js` — WebSocket client:
+- [x] 7.1 Create `frontend/index.html` with semantic structure: header with connection status badge, top-movies table, connected-users counter, recent activity feed, latency chart container; load Tailwind CSS and Chart.js from CDN (no build step)
+- [x] 7.2 Create `frontend/app.js` — WebSocket client:
   - Connects to `ws://<GATEWAY_HOST>/ws` on page load (host read from `window.GATEWAY_WS_URL` or a `<script>` config block)
   - Dispatches `initial_state` and `stats_update` messages to `dashboard.js` and `latencyChart.js`
   - Implements exponential backoff reconnection: initial 1000ms, multiplier 2, cap 30000ms, max 10 attempts
   - Displays "Reconnecting..." badge during attempts; "Connection lost. Please refresh the page." after 10 failures
-- [ ] 7.3 Create `frontend/dashboard.js` — DOM update module:
+- [x] 7.3 Create `frontend/dashboard.js` — DOM update module:
   - `renderTop10(top10)`: updates the movies table (sorted descending by `viewCount`)
   - `renderConnectedClients(count)`: updates the counter element
   - `renderActivityFeed(event)`: prepends `{ movieId, lastViewedAt }` to feed; keeps last 20 items
   - All DOM updates complete within 500ms of message receipt (per Requirement 6.2)
-- [ ] 7.4 Create `frontend/latencyChart.js` — latency percentile module:
+- [x] 7.4 Create `frontend/latencyChart.js` — latency percentile module:
   - `addSample(publishedAt, deliveredAt)`: computes `latencyMs`, pushes to `latencySamples`, prunes samples older than 60s; skips if `publishedAt` is missing
   - `getPercentiles()`: returns `{ p50, p95, p99 }` from sorted `latencyMs` values using index-based selection
   - `renderChart(canvas, percentiles)`: renders p50/p95/p99 as a Chart.js line chart on the provided `<canvas>` element; updates on each `stats_update`
-- [ ] 7.5 Write unit tests for `latencyChart.js` (using Jest + jsdom or plain Node):
+- [x] 7.5 Write unit tests for `latencyChart.js` (using Jest + jsdom or plain Node):
   - Verify p50/p95/p99 calculation for known sample sets
   - Verify samples older than 60s are pruned
   - Verify `addSample` skips entries with missing `publishedAt`
 - [ ] 7.6 Write unit tests for `dashboard.js`:
   - Verify activity feed keeps max 20 items
   - Verify top-10 table renders correct number of rows sorted by `viewCount` descending
-- [ ] 7.7 Upload `frontend/` to the S3 bucket created in Task 1.8 with `aws s3 sync ./frontend s3://<BUCKET_NAME>/ --delete`
+- [x] 7.7 Upload `frontend/` to the S3 bucket created in Task 1.8 with `aws s3 sync ./frontend s3://<BUCKET_NAME>/ --delete`
 
 **Validates:** Requirements 6 (R6.1–R6.7)
 

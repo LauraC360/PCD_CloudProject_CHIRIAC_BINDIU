@@ -4,8 +4,195 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Realtime Analytics Dashboard</title>
+
+  <!-- Tailwind CSS (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Chart.js (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <!-- Gateway WebSocket URL — override this value before app.js loads -->
+  <script>
+    window.GATEWAY_WS_URL = window.GATEWAY_WS_URL || 'ws://localhost:8080/ws';
+  </script>
 </head>
-<body>
-  <h1>Realtime Analytics Dashboard</h1>
+<body class="bg-gray-950 text-gray-100 min-h-screen font-sans antialiased">
+
+  <!-- ===== HEADER ===== -->
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <svg class="w-7 h-7 text-indigo-400" fill="none" stroke="currentColor" stroke-width="1.8"
+           viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M3 13.5l4-4 4 4 4-6 4 4" />
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M3 20h18" />
+      </svg>
+      <h1 class="text-xl font-semibold tracking-tight text-white">
+        Realtime Analytics Dashboard
+      </h1>
+    </div>
+
+    <!-- Connection status badge -->
+    <div class="flex items-center gap-2" aria-live="polite" aria-atomic="true">
+      <span id="connection-dot"
+            class="inline-block w-2.5 h-2.5 rounded-full bg-gray-500"
+            aria-hidden="true"></span>
+      <span id="connection-status"
+            class="text-sm font-medium text-gray-400">
+        Connecting…
+      </span>
+    </div>
+  </header>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+    <!-- ── Row 1: Connected Users + quick stats ── -->
+    <section aria-labelledby="overview-heading" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <h2 id="overview-heading" class="sr-only">Overview</h2>
+
+      <!-- Connected users counter -->
+      <article class="bg-gray-900 rounded-xl border border-gray-800 p-5 flex flex-col gap-1">
+        <p class="text-xs font-semibold uppercase tracking-widest text-gray-500">
+          Connected Users
+        </p>
+        <p id="connected-clients"
+           class="text-4xl font-bold tabular-nums text-indigo-400"
+           aria-label="Connected users count">
+          —
+        </p>
+      </article>
+
+      <!-- Total events (populated by app.js) -->
+      <article class="bg-gray-900 rounded-xl border border-gray-800 p-5 flex flex-col gap-1">
+        <p class="text-xs font-semibold uppercase tracking-widest text-gray-500">
+          Total Views (top 10)
+        </p>
+        <p id="total-views"
+           class="text-4xl font-bold tabular-nums text-emerald-400"
+           aria-label="Total views across top 10 movies">
+          —
+        </p>
+      </article>
+
+      <!-- Last update timestamp -->
+      <article class="bg-gray-900 rounded-xl border border-gray-800 p-5 flex flex-col gap-1">
+        <p class="text-xs font-semibold uppercase tracking-widest text-gray-500">
+          Last Update
+        </p>
+        <p id="last-update"
+           class="text-sm font-medium text-gray-300 mt-1"
+           aria-label="Timestamp of last received update">
+          —
+        </p>
+      </article>
+    </section>
+
+    <!-- ── Row 2: Top Movies table + Recent Activity feed ── -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Top Movies table (spans 2 of 3 columns on large screens) -->
+      <section aria-labelledby="top-movies-heading"
+               class="lg:col-span-2 bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+        <header class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+          <h2 id="top-movies-heading" class="text-base font-semibold text-white">
+            Top Movies by Views
+          </h2>
+          <span class="text-xs text-gray-500">Live · top 10</span>
+        </header>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm" aria-label="Top movies by view count">
+            <thead>
+              <tr class="text-left text-xs font-semibold uppercase tracking-wider
+                         text-gray-500 border-b border-gray-800">
+                <th scope="col" class="px-5 py-3 w-8">#</th>
+                <th scope="col" class="px-5 py-3">Movie ID</th>
+                <th scope="col" class="px-5 py-3 text-right">Views</th>
+                <th scope="col" class="px-5 py-3 text-right hidden sm:table-cell">Last Viewed</th>
+              </tr>
+            </thead>
+            <tbody id="top-movies-tbody" class="divide-y divide-gray-800">
+              <!-- Rows injected by dashboard.js -->
+              <tr>
+                <td colspan="4" class="px-5 py-8 text-center text-gray-600 text-sm">
+                  Waiting for data…
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Recent Activity feed -->
+      <section aria-labelledby="activity-heading"
+               class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden flex flex-col">
+        <header class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+          <h2 id="activity-heading" class="text-base font-semibold text-white">
+            Recent Activity
+          </h2>
+          <span class="text-xs text-gray-500">Last 20 events</span>
+        </header>
+
+        <ol id="activity-feed"
+            aria-label="Recent view activity"
+            aria-live="polite"
+            aria-relevant="additions"
+            class="flex-1 overflow-y-auto divide-y divide-gray-800 max-h-80">
+          <!-- Items prepended by dashboard.js -->
+          <li class="px-5 py-4 text-sm text-gray-600">
+            Waiting for activity…
+          </li>
+        </ol>
+      </section>
+    </div>
+
+    <!-- ── Row 3: Latency chart ── -->
+    <section aria-labelledby="latency-heading"
+             class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+      <header class="px-5 py-4 border-b border-gray-800 flex items-center justify-between flex-wrap gap-2">
+        <h2 id="latency-heading" class="text-base font-semibold text-white">
+          End-to-End Latency
+        </h2>
+        <div class="flex items-center gap-4 text-xs text-gray-400">
+          <span>60-second sliding window</span>
+          <!-- Percentile badges (updated by latencyChart.js) -->
+          <span class="flex items-center gap-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
+            p50: <strong id="latency-p50" class="text-indigo-300 ml-0.5">—</strong> ms
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-amber-400"></span>
+            p95: <strong id="latency-p95" class="text-amber-300 ml-0.5">—</strong> ms
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-rose-400"></span>
+            p99: <strong id="latency-p99" class="text-rose-300 ml-0.5">—</strong> ms
+          </span>
+        </div>
+      </header>
+
+      <div class="p-5">
+        <div class="relative h-56">
+          <canvas id="latency-chart"
+                  aria-label="Latency percentile chart (p50, p95, p99) over the last 60 seconds"
+                  role="img"></canvas>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="mt-8 pb-6 text-center text-xs text-gray-700">
+    Realtime Analytics Dashboard — Fast Lazy Bee · AWS SQS · Lambda · DynamoDB · WebSocket Gateway
+  </footer>
+
+  <!-- Application scripts (loaded after DOM is ready) -->
+  <script src="latencyChart.js"></script>
+  <script src="dashboard.js"></script>
+  <script src="app.js"></script>
+
 </body>
 </html>
