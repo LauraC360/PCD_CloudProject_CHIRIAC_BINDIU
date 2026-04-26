@@ -96,8 +96,8 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 - [x] 3.5.2 Create a database user with read/write access to the movies database
 - [x] 3.5.3 Set IP allowlist to `0.0.0.0/0` — required because App Runner has dynamic outbound IPs; a static allowlist is not feasible
 - [x] 3.5.4 Copy the connection string (format: `mongodb+srv://<user>:<password>@<cluster>.mongodb.net/<dbname>?retryWrites=true&w=majority`)
-- [~] 3.5.5 Store it in SSM: `bash infrastructure/ssm/create-ssm-params.sh --mongo` — paste the connection string when prompted (input is hidden, never stored in source)
-- [~] 3.5.6 Verify: `aws ssm get-parameter --name /analytics/MONGO_URL --with-decryption --profile pers --region us-east-1` returns the parameter (value will be encrypted in output)
+- [x] 3.5.5 Store it in SSM: `bash infrastructure/ssm/create-ssm-params.sh --mongo` — paste the connection string when prompted (input is hidden, never stored in source)
+- [x] 3.5.6 Verify: `aws ssm get-parameter --name /analytics/MONGO_URL --with-decryption --profile pers --region us-east-1` returns the parameter (value will be encrypted in output)
 
 **Validates:** Requirements 10.9
 
@@ -283,6 +283,13 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 - [ ] 14.1 Run all unit and property-based tests across all services; all must pass
 - [ ] 14.2 Verify CloudWatch namespace `AnalyticsDashboard` has all expected metrics after a load test run
 - [ ] 14.3 Write root `README.md`: architecture overview, step-by-step deploy instructions (`cdk deploy`, ECR push, App Runner redeploy, ECS force update), how to run tests, how to run load tests, dashboard URL
+  - Must include a **Prerequisites** section covering MongoDB Atlas setup:
+    1. Create free M0 cluster at cloud.mongodb.com
+    2. Load Sample Dataset (includes `sample_mflix` with movies collection)
+    3. Create database user with read/write access
+    4. Add `0.0.0.0/0` to IP allowlist (required for App Runner dynamic IPs)
+    5. Copy connection string and store in SSM: `bash infrastructure/ssm/create-ssm-params.sh --mongo`
+    6. Set `MONGO_DB_NAME=sample_mflix` in App Runner env vars
 - [ ] 14.4 Write per-service `README.md` files covering: what the service does, how to run locally, required env vars — for `service-a/`, `event-processor/`, `websocket-gateway/`, `frontend/`, and `load-testing/`
 - [ ] 14.5 Remove any hardcoded ARNs, queue URLs, or credentials from source; verify `.gitignore` covers `.env` files
 - [ ] 14.6 Run `cdk destroy` after presentation to tear down all resources
