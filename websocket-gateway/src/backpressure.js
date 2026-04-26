@@ -3,167 +3,170 @@
 /**
  * Backpressure module for the WebSocket Gateway.
  *
- * Maintains a sliding-window event counter (1-second window). When the
- * incoming notification rate exceeds 100 events/second, backpressure is
- * activated: a 1-second interval timer coalesces all pending updates into a
- * single flush callback invocation per second.
+ * Tracks the incoming notification rate using a 1-second sliding window.
+ * When the rate exceeds 100 events/s, backpressure is activated:
+ *   - Pending updates are coalesced into a single consolidated push per second.
+ *   - A `setInterval` timer fires the consolidated push at most once per second.
  *
- * Deactivation: if the rate drops to ≤ 100 for 3 consecutive seconds, the
- * interval timer is cancelled and backpressure is deactivated.
+ * Backpressure deactivates automatically when the rate drops to ≤ 100 for
+ * 3 consecutive seconds, at which point the interval timer is cancelled.
  *
  * Usage:
- *   const bp = createBackpressure();
- *   bp.onFlush((pendingUpdate) => connectionManager.broadcast(...));
- *   bp.record(notificationPayload);
- *   bp.isActive(); // true when throttling
+ *   const bp = createBackpressure(broadcastFn);
+ *   bp.record(update);   // call on every incoming /internal/notify
+ *   bp.isActive();       // true when throttling is in effect
  */
-function createBackpressure() {
-  // --- state ---
-  let backpressureActive = false;
 
-  // Sliding-window counter: number of record() calls in the current 1-second window
-  let windowCount = 0;
+const RATE_THRESHOLD = 100;       // events/s that triggers backpressure
+const DEACTIVATION_WINDOW = 3;    // consecutive quiet seconds before deactivation
+const PUSH_INTERVAL_MS = 1000;    // coalesced push interval when active
 
-  // The most recent pending update payload (coalesced — only the latest matters)
-  let pendingUpdate = null;
+/**
+ * Creates a backpressure controller.
+ *
+ * @param {function(object): void} broadcastFn
+ *   Called with the latest coalesced update object when the interval fires.
+ *   The caller is responsible for querying DynamoDB and constructing the
+ *   full stats_update payload before passing it to broadcastFn.
+ *
+ * @returns {{ record: function(object): void, isActive: function(): boolean, destroy: function(): void }}
+ */
+function createBackpressure(broadcastFn) {
+  // --- sliding-window state ---
+  let windowCount = 0;          // events recorded in the current 1-second window
+  let windowTimer = null;       // setTimeout handle that resets windowCount each second
 
-  // Number of consecutive 1-second windows where rate was ≤ 100
-  let consecutiveLowSeconds = 0;
+  // --- backpressure state ---
+  let active = false;
+  let consecutiveQuietSeconds = 0;
+  let pendingUpdate = null;     // most-recent coalesced update (last-write-wins)
+  let pushTimer = null;         // setInterval handle for the coalesced push
 
-  // Interval handle for the 1-second window counter reset
-  let windowResetTimer = null;
-
-  // Interval handle for the 1-second flush timer (active only when backpressure is on)
-  let flushTimer = null;
-
-  // Registered flush callback
-  let flushCallback = null;
-
-  // --- internal helpers ---
+  // -------------------------------------------------------------------------
+  // Internal helpers
+  // -------------------------------------------------------------------------
 
   /**
-   * Start the 1-second sliding-window counter reset timer.
-   * Runs continuously so we always know the current rate.
+   * Resets the sliding-window counter every second and evaluates whether
+   * backpressure should be deactivated.
    */
   function startWindowTimer() {
-    if (windowResetTimer !== null) return;
+    if (windowTimer !== null) return; // already running
 
-    windowResetTimer = setInterval(() => {
-      if (backpressureActive) {
-        if (windowCount <= 100) {
-          consecutiveLowSeconds += 1;
-          if (consecutiveLowSeconds >= 3) {
+    windowTimer = setInterval(() => {
+      const count = windowCount;
+      windowCount = 0; // reset for the next window
+
+      if (active) {
+        if (count <= RATE_THRESHOLD) {
+          consecutiveQuietSeconds += 1;
+          if (consecutiveQuietSeconds >= DEACTIVATION_WINDOW) {
             deactivate();
           }
         } else {
-          // Rate is still high — reset the consecutive-low counter
-          consecutiveLowSeconds = 0;
-        }
-      } else {
-        // Not active — check if we should activate
-        if (windowCount > 100) {
-          activate();
+          // still above threshold — reset the quiet counter
+          consecutiveQuietSeconds = 0;
         }
       }
-
-      // Reset the window counter for the next second
-      windowCount = 0;
-    }, 1000);
+    }, PUSH_INTERVAL_MS);
   }
 
-  /**
-   * Activate backpressure: start the flush interval.
-   */
+  /** Activates backpressure and starts the coalesced-push interval. */
   function activate() {
-    backpressureActive = true;
-    consecutiveLowSeconds = 0;
+    active = true;
+    consecutiveQuietSeconds = 0;
 
-    if (flushTimer !== null) return; // already running
-
-    flushTimer = setInterval(() => {
-      if (flushCallback !== null && pendingUpdate !== null) {
-        flushCallback(pendingUpdate);
-      }
-    }, 1000);
-  }
-
-  /**
-   * Deactivate backpressure: cancel the flush interval and reset counters.
-   */
-  function deactivate() {
-    backpressureActive = false;
-    consecutiveLowSeconds = 0;
-
-    if (flushTimer !== null) {
-      clearInterval(flushTimer);
-      flushTimer = null;
+    if (pushTimer === null) {
+      pushTimer = setInterval(() => {
+        if (pendingUpdate !== null) {
+          const update = pendingUpdate;
+          pendingUpdate = null;
+          broadcastFn(update);
+        }
+      }, PUSH_INTERVAL_MS);
     }
   }
 
-  // Start the window timer immediately so the rate is always tracked
-  startWindowTimer();
+  /** Deactivates backpressure and cancels the coalesced-push interval. */
+  function deactivate() {
+    active = false;
+    consecutiveQuietSeconds = 0;
 
-  // --- public API ---
+    if (pushTimer !== null) {
+      clearInterval(pushTimer);
+      pushTimer = null;
+    }
+
+    // Flush any remaining pending update immediately on deactivation
+    if (pendingUpdate !== null) {
+      const update = pendingUpdate;
+      pendingUpdate = null;
+      broadcastFn(update);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Public API
+  // -------------------------------------------------------------------------
 
   /**
-   * Record an incoming notification event.
+   * Records an incoming notification event.
    *
-   * Increments the sliding-window counter and stores the latest update
-   * payload for coalesced flushing when backpressure is active.
+   * - Increments the sliding-window counter.
+   * - If the counter exceeds the threshold, activates backpressure.
+   * - When backpressure is active, stores `update` as the pending coalesced
+   *   payload (last-write-wins within the current window).
+   * - When backpressure is NOT active, calls `broadcastFn(update)` immediately.
    *
-   * @param {*} update - The notification payload (most recent wins).
+   * @param {object} update - The notification payload to broadcast.
    */
   function record(update) {
     windowCount += 1;
-    pendingUpdate = update;
+
+    // Ensure the window-reset timer is running
+    startWindowTimer();
+
+    if (!active && windowCount > RATE_THRESHOLD) {
+      activate();
+    }
+
+    if (active) {
+      // Coalesce: keep only the most recent update
+      pendingUpdate = update;
+    } else {
+      broadcastFn(update);
+    }
   }
 
   /**
-   * Returns true when backpressure is currently active (rate > 100/s).
+   * Returns `true` when backpressure is currently active.
    *
    * @returns {boolean}
    */
   function isActive() {
-    return backpressureActive;
+    return active;
   }
 
   /**
-   * Register a callback to be invoked on each coalesced flush (once per
-   * second while backpressure is active). The callback receives the latest
-   * pending update payload.
-   *
-   * @param {function(*): void} callback
+   * Cleans up all timers. Call this when shutting down the gateway to avoid
+   * keeping the Node.js event loop alive.
    */
-  function onFlush(callback) {
-    flushCallback = callback;
-  }
-
-  /**
-   * Reset all state. Intended for use in tests.
-   */
-  function reset() {
-    backpressureActive = false;
-    windowCount = 0;
+  function destroy() {
+    if (windowTimer !== null) {
+      clearInterval(windowTimer);
+      windowTimer = null;
+    }
+    if (pushTimer !== null) {
+      clearInterval(pushTimer);
+      pushTimer = null;
+    }
     pendingUpdate = null;
-    consecutiveLowSeconds = 0;
-
-    if (windowResetTimer !== null) {
-      clearInterval(windowResetTimer);
-      windowResetTimer = null;
-    }
-
-    if (flushTimer !== null) {
-      clearInterval(flushTimer);
-      flushTimer = null;
-    }
-
-    flushCallback = null;
-
-    // Restart the window timer so the instance remains usable after reset
-    startWindowTimer();
+    active = false;
+    windowCount = 0;
+    consecutiveQuietSeconds = 0;
   }
 
-  return { record, isActive, onFlush, reset };
+  return { record, isActive, destroy };
 }
 
 module.exports = { createBackpressure };

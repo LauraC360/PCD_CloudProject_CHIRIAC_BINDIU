@@ -137,19 +137,19 @@ Tasks are ordered by dependency. Each task maps directly to requirements and des
 - [x] 6.4 Create `websocket-gateway/src/statsQuery.js`:
   - Queries DynamoDB `MovieStats` GSI (`pk = 'STATS'`, `ScanIndexForward: false`, `Limit: 10`)
   - Returns array of `{ movieId, viewCount, lastViewedAt }`
-- [ ] 6.5 Create `websocket-gateway/src/backpressure.js`:
+- [x] 6.5 Create `websocket-gateway/src/backpressure.js`:
   - Sliding-window counter (1-second window) tracking incoming notification rate
   - `record()`: increments counter; activates backpressure if count > 100
   - `isActive()`: returns boolean
   - When active: coalesces pending updates; fires one consolidated push per second via `setInterval`
   - When rate drops ≤ 100 for 3 consecutive seconds: deactivates, cancels timer
-- [ ] 6.6 Create `websocket-gateway/src/wsServer.js` — sets up `ws.Server` on path `/ws`:
+- [x] 6.6 Create `websocket-gateway/src/wsServer.js` — sets up `ws.Server` on path `/ws`:
   - `connection` event: query top-10; send `initial_state` message with `{ type, deliveredAt, connectedClients, top10 }`; broadcast updated `connectedClients` count to all other clients
   - `close`/`error` event: broadcast updated `connectedClients` count
-- [ ] 6.7 Create `websocket-gateway/src/httpServer.js` — Express app with two routes:
+- [x] 6.7 Create `websocket-gateway/src/httpServer.js` — Express app with two routes:
   - `GET /health` → `{ status: 'ok', connectedClients: connectionManager.getCount(), backpressureActive: backpressure.isActive() }`
   - `POST /internal/notify` → validates payload `{ movieId, viewCount, publishedAt }`; calls `backpressure.record()`; if not throttled: queries top-10, stamps `deliveredAt = new Date().toISOString()`, calls `connectionManager.broadcast(stats_update)`; logs `WARN` if `Date.parse(deliveredAt) - Date.parse(publishedAt) > 2000`; returns HTTP 400 on invalid payload
-- [ ] 6.8 Create `websocket-gateway/src/index.js` — starts both the WebSocket server (port `PORT`, default 8080) and the HTTP server (port `INTERNAL_PORT`, default 8081)
+- [x] 6.8 Create `websocket-gateway/src/index.js` — starts both the WebSocket server (port `PORT`, default 8080) and the HTTP server (port `INTERNAL_PORT`, default 8081)
 - [ ] 6.9 Write unit tests for `backpressure.js`:
   - Verify activation when > 100 events/s
   - Verify deactivation after rate drops for 3 consecutive seconds
@@ -165,8 +165,8 @@ Tasks are ordered by dependency. Each task maps directly to requirements and des
   - Generate N > 100 notifications within 1 second
   - Verify each mock client receives exactly 1 `stats_update` message
   - Tag: `// Feature: realtime-analytics-dashboard, Property 7: Backpressure Coalescing`
-- [ ] 6.13 Create `websocket-gateway/Dockerfile` (multi-stage build, non-root user, exposes ports 8080 and 8081)
-- [ ] 6.14 Create `websocket-gateway/.env.example` documenting: `DYNAMODB_TABLE_STATS`, `AWS_REGION`, `PORT`, `INTERNAL_PORT`
+- [x] 6.13 Create `websocket-gateway/Dockerfile` (multi-stage build, non-root user, exposes ports 8080 and 8081)
+- [x] 6.14 Create `websocket-gateway/.env.example` documenting: `DYNAMODB_TABLE_STATS`, `AWS_REGION`, `PORT`, `INTERNAL_PORT`
 
 **Validates:** Requirements 5, 9.2 (R5.1–R5.6)
 
