@@ -47,6 +47,7 @@ const API_ENDPOINTS = {
   ENTRY_POINT: '/',
   LOGIN: '/login',
   HEALTH: '/health',
+  METRICS: '/metrics',
   USERS: '/users',
   MOVIES: '/movies',
   MOVIE: '/movies/:movie_id',

@@ -2,6 +2,7 @@ import type { FastifyMongoNestedObject, FastifyMongoObject } from '@fastify/mong
 import type { EnvSchemaType } from '../schemas/dotenv';
 import type { MovieCommentSchemaType, MovieSchemaType } from '../schemas/movies/data';
 import type { PaginatedSearchSchemaType, ResourceSchemaType } from '../schemas/movies/http';
+import type { SqsPublisher } from '../plugins/sqs';
 
 interface DataStore {
   checkUser: (email: string, password: string) => Promise<ResourceSchemaType<UserSchemaType>>;
@@ -26,5 +27,6 @@ declare module 'fastify' {
     config: EnvSchemaType;
     mongo: FastifyMongoObject & FastifyMongoNestedObject;
     dataStore: DataStore;
+    sqsPublisher: SqsPublisher;
   }
 }

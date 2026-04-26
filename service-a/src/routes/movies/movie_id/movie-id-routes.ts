@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { FastifyInstance, RouteOptions } from 'fastify';
 import type { MovieSchema, MovieSchemaType } from '../../../schemas/movies/data';
 import {
@@ -28,6 +29,13 @@ const routes: RouteOptions[] = [
     handler: async function fetchMovie(request, reply) {
       const params = request.params as MovieIdObjectSchemaType;
       const movie = (await this.dataStore.fetchMovie(params.movie_id)) as MovieSchemaType;
+
+      this.sqsPublisher.publish({
+        schemaVersion: '1.0',
+        requestId: crypto.randomUUID(),
+        movieId: params.movie_id,
+        publishedAt: new Date().toISOString()
+      });
 
       if (acceptsHal(request)) {
         const halMovie = addLinksToResource<typeof MovieSchema>(request, movie);

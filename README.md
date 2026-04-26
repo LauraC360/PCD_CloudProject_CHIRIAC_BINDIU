@@ -167,6 +167,33 @@ Or use the provided deploy script:
 bash event-processor/deploy.sh
 ```
 
+### Usage Instructions
+Using the service-a (Fast Lazy Bee API):
+
+##### How to build and run server
+
+```bash
+npm install
+```
+
+```bash
+npm run dev
+```
+
+##### Testing example: 
+# 1. Hit real movie → 200 + movie data
+Invoke-RestMethod http://localhost:3000/api/v1/movies/573a1390f29313caabcd42e8
+
+# 2. Check metrics → publishErrors: 1, totalPublished: 0
+Invoke-RestMethod http://localhost:3000/api/v1/metrics
+
+# 3. Hit fake ID → 404
+Invoke-RestMethod http://localhost:3000/api/v1/movies/000000000000000000000000
+
+# 4. Check metrics again → publishErrors still 1 (404 didn't trigger publish)
+Invoke-RestMethod http://localhost:3000/api/v1/metrics
+
+
 ---
 
 ## Deploy Instructions

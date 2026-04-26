@@ -13,3 +13,10 @@ interface Collection<T> {
 }
 
 interface PaginatedCollection<T> extends Collection<T>, Pagination {}
+
+interface ViewEvent {
+  schemaVersion: string;
+  requestId: string;
+  movieId: string;
+  publishedAt: string;
+}
