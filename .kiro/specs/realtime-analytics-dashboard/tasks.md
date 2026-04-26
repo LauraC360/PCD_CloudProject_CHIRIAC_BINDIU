@@ -118,9 +118,9 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 ### Task 5: CDK — Cognito User Pool
 
-- [ ] 5.1 Create Cognito User Pool with email sign-in; configure hosted UI domain
-- [ ] 5.2 Create app client (no client secret — SPA); set callback URLs for dashboard CloudFront domain
-- [ ] 5.3 Output User Pool ID, app client ID, and JWKS endpoint URL as CDK stack outputs
+- [x] 5.1 Create Cognito User Pool with email sign-in; configure hosted UI domain
+- [x] 5.2 Create app client (no client secret — SPA); set callback URLs for dashboard CloudFront domain
+- [x] 5.3 Output User Pool ID, app client ID, and JWKS endpoint URL as CDK stack outputs
 - [ ] 5.4 After `cdk deploy`: manually create team member accounts and `loadtest@project.com` account via AWS Console — never hardcode in CDK
 - [ ] 5.5 Verify: open Cognito hosted UI URL in browser — login page appears; log in with a test account; confirm JWT (ID token) is returned; decode JWT at jwt.io and confirm `iss` matches the User Pool
 

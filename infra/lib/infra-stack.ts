@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib/core';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
@@ -30,6 +31,9 @@ export class InfraStack extends cdk.Stack {
   // Security groups (Task 2.4) — created together so they can reference each other
   public readonly lambdaSg: ec2.SecurityGroup;  // assigned to Lambda
   public readonly wsgSg: ec2.SecurityGroup;     // assigned to WSG ECS task (used in Task 3.6)
+  // Cognito User Pool (Task 5)
+  public readonly userPool: cognito.UserPool;
+  public readonly userPoolClient: cognito.UserPoolClient;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -380,5 +384,74 @@ export class InfraStack extends cdk.Stack {
         reportBatchItemFailures: true,
       }),
     );
+
+    // Cognito User Pool (Task 5.1) — email sign-in, hosted UI
+    // User accounts are created manually after deploy — never hardcoded in CDK
+    this.userPool = new cognito.UserPool(this, 'UserPool', {
+      userPoolName: 'analytics-dashboard-users',
+      selfSignUpEnabled: false,          // invite-only — team members added manually
+      signInAliases: { email: true },
+      autoVerify: { email: true },
+      passwordPolicy: {
+        minLength: 8,
+        requireLowercase: true,
+        requireUppercase: true,
+        requireDigits: true,
+        requireSymbols: false,
+      },
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+
+    // Hosted UI domain — prefix must be globally unique
+    this.userPool.addDomain('UserPoolDomain', {
+      cognitoDomain: {
+        domainPrefix: `analytics-dashboard-${this.account}`,
+      },
+    });
+
+    // App client (Task 5.2) — no client secret (SPA)
+    // Callback URLs updated in Task 6 once CloudFront domain is known
+    this.userPoolClient = this.userPool.addClient('DashboardClient', {
+      userPoolClientName: 'dashboard-spa',
+      generateSecret: false,             // SPA cannot keep a secret
+      authFlows: {
+        userPassword: true,
+        userSrp: true,
+      },
+      oAuth: {
+        flows: { authorizationCodeGrant: true },
+        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
+        callbackUrls: [
+          'http://localhost:3000',        // local dev placeholder
+          // CloudFront callback URL added in Task 6
+        ],
+        logoutUrls: ['http://localhost:3000'],
+      },
+    });
+
+    // Outputs (Task 5.3)
+    new cdk.CfnOutput(this, 'UserPoolId', {
+      value: this.userPool.userPoolId,
+      description: 'Cognito User Pool ID',
+      exportName: 'AnalyticsUserPoolId',
+    });
+
+    new cdk.CfnOutput(this, 'UserPoolClientId', {
+      value: this.userPoolClient.userPoolClientId,
+      description: 'Cognito app client ID (dashboard SPA)',
+      exportName: 'AnalyticsUserPoolClientId',
+    });
+
+    new cdk.CfnOutput(this, 'CognitoJwksUrl', {
+      value: `https://cognito-idp.${this.region}.amazonaws.com/${this.userPool.userPoolId}/.well-known/jwks.json`,
+      description: 'Cognito JWKS endpoint for JWT validation',
+      exportName: 'AnalyticsCognitoJwksUrl',
+    });
+
+    new cdk.CfnOutput(this, 'CognitoHostedUiUrl', {
+      value: `https://analytics-dashboard-${this.account}.auth.${this.region}.amazoncognito.com`,
+      description: 'Cognito hosted UI base URL',
+      exportName: 'AnalyticsCognitoHostedUiUrl',
+    });
   }
 }
