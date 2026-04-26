@@ -31,16 +31,16 @@ Tasks are ordered by dependency. Each task maps directly to requirements and des
 
 ## Task 2: Service A — SQS Plugin
 
-- [-] 2.1 Install `@aws-sdk/client-sqs` as a production dependency in `service-a/`
-- [~] 2.2 Create `service-a/src/plugins/sqs.ts` as a `fastify-plugin` (`fp`) that:
+- [x] 2.1 Install `@aws-sdk/client-sqs` as a production dependency in `service-a/`
+- [x] 2.2 Create `service-a/src/plugins/sqs.ts` as a `fastify-plugin` (`fp`) that:
   - Initialises `SQSClient` using `fastify.config.AWS_REGION`
   - Exposes `fastify.sqsPublisher.publish(event: ViewEvent): void` — fire-and-forget, no `await`
   - Maintains in-memory counters: `totalPublished`, `publishErrors`, `totalPublishLatencyMs` (for rolling average)
   - On SQS error: increments `publishErrors`, logs at `ERROR` level with `movieId` and `requestId`, does not throw
   - Declares `dependencies: ['server-config']` so `fastify.config` is available at registration time
-- [ ] 2.3 Define the `ViewEvent` TypeScript interface in `service-a/src/types/resources.d.ts` (or a new `view-event.ts`): `{ schemaVersion: string; requestId: string; movieId: string; publishedAt: string }`
-- [ ] 2.4 Add `SQS_QUEUE_URL: Type.String()` and `AWS_REGION: Type.String({ default: 'us-east-1' })` to the TypeBox schema in `service-a/src/schemas/dotenv.ts`
-- [ ] 2.5 Register the SQS plugin in `service-a/src/plugins/` so `@fastify/autoload` picks it up automatically (file naming follows existing plugin convention)
+- [x] 2.3 Define the `ViewEvent` TypeScript interface in `service-a/src/types/resources.d.ts` (or a new `view-event.ts`): `{ schemaVersion: string; requestId: string; movieId: string; publishedAt: string }`
+- [x] 2.4 Add `SQS_QUEUE_URL: Type.String()` and `AWS_REGION: Type.String({ default: 'us-east-1' })` to the TypeBox schema in `service-a/src/schemas/dotenv.ts`
+- [x] 2.5 Register the SQS plugin in `service-a/src/plugins/` so `@fastify/autoload` picks it up automatically (file naming follows existing plugin convention)
 - [ ] 2.6 Write unit tests in `service-a/src/test/` for the SQS plugin using a mocked `SQSClient`:
   - Verify `publish()` calls `SendMessageCommand` with correct `MessageBody` JSON
   - Verify `publishErrors` increments when `SQSClient.send()` rejects
@@ -53,9 +53,9 @@ Tasks are ordered by dependency. Each task maps directly to requirements and des
 
 ## Task 3: Service A — Movie Route Extension and Metrics Endpoint
 
-- [ ] 3.1 Modify `service-a/src/routes/movies/movie_id/movie-id-routes.ts`: in the `GET /movies/:movie_id` handler, after `this.dataStore.fetchMovie(params.movie_id)` succeeds, call `this.sqsPublisher.publish({ schemaVersion: '1.0', requestId: crypto.randomUUID(), movieId: params.movie_id, publishedAt: new Date().toISOString() })` without `await`, then send the reply — the 404 path is already handled by `genNotFoundError` throwing before this line
-- [ ] 3.2 Add `sqsPublisher` to the Fastify instance type declaration in `service-a/src/types/fastify.d.ts` so TypeScript resolves `this.sqsPublisher` inside route handlers
-- [ ] 3.3 Create `service-a/src/routes/metrics/metrics-routes.ts` with a `GET /metrics` handler that reads `fastify.sqsPublisher.getMetrics()` and returns `{ totalPublished, publishErrors, avgPublishLatencyMs }`
+- [x] 3.1 Modify `service-a/src/routes/movies/movie_id/movie-id-routes.ts`: in the `GET /movies/:movie_id` handler, after `this.dataStore.fetchMovie(params.movie_id)` succeeds, call `this.sqsPublisher.publish({ schemaVersion: '1.0', requestId: crypto.randomUUID(), movieId: params.movie_id, publishedAt: new Date().toISOString() })` without `await`, then send the reply — the 404 path is already handled by `genNotFoundError` throwing before this line
+- [x] 3.2 Add `sqsPublisher` to the Fastify instance type declaration in `service-a/src/types/fastify.d.ts` so TypeScript resolves `this.sqsPublisher` inside route handlers
+- [x] 3.3 Create `service-a/src/routes/metrics/metrics-routes.ts` with a `GET /metrics` handler that reads `fastify.sqsPublisher.getMetrics()` and returns `{ totalPublished, publishErrors, avgPublishLatencyMs }`
 - [ ] 3.4 Write unit tests for the modified `GET /movies/:movie_id` route:
   - Verify `sqsPublisher.publish` is called with correct `movieId` on a 200 response
   - Verify `sqsPublisher.publish` is NOT called on a 404 response
@@ -128,13 +128,13 @@ Tasks are ordered by dependency. Each task maps directly to requirements and des
 
 ## Task 6: WebSocket Gateway
 
-- [ ] 6.1 Create `websocket-gateway/` directory with `package.json`
-- [ ] 6.2 Install dependencies: `ws`, `express`, `@aws-sdk/lib-dynamodb`, `@aws-sdk/client-dynamodb`
-- [ ] 6.3 Create `websocket-gateway/src/connectionManager.js`:
+- [x] 6.1 Create `websocket-gateway/` directory with `package.json`
+- [x] 6.2 Install dependencies: `ws`, `express`, `@aws-sdk/lib-dynamodb`, `@aws-sdk/client-dynamodb`
+- [x] 6.3 Create `websocket-gateway/src/connectionManager.js`:
   - Wraps `wss.clients` (the native `Set` from the `ws` library)
   - Exposes `broadcast(message)` — iterates `wss.clients`, sends to each client with `readyState === WebSocket.OPEN`
   - Exposes `getCount()` — returns `wss.clients.size`
-- [ ] 6.4 Create `websocket-gateway/src/statsQuery.js`:
+- [x] 6.4 Create `websocket-gateway/src/statsQuery.js`:
   - Queries DynamoDB `MovieStats` GSI (`pk = 'STATS'`, `ScanIndexForward: false`, `Limit: 10`)
   - Returns array of `{ movieId, viewCount, lastViewedAt }`
 - [ ] 6.5 Create `websocket-gateway/src/backpressure.js`:
