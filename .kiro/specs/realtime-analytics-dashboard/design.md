@@ -13,7 +13,7 @@ The system is composed of four independently deployed components:
 | **WebSocket Gateway** | Node.js / ws | AWS ECS Fargate |
 | **Frontend** | HTML + Vanilla JS | Static (served by Gateway or S3) |
 
-Supporting AWS services: SQS (two queues), DynamoDB (two tables), CloudWatch Logs/Metrics.
+Supporting AWS services: SQS (two queues), DynamoDB (three tables), CloudWatch Logs/Metrics.
 
 ### Design Goals
 
@@ -80,6 +80,17 @@ When the incoming notification rate exceeds 100 events/second, the Gateway activ
 - The Gateway computes `latencyMs = ts - publishedAt` for each event and maintains a rolling array of samples within the last 60 seconds. p50/p95/p99 are derived server-side using index-based percentile selection and included in every `stats_update` payload under `latency: { p50, p95, p99 }`.
 - The frontend does **not** perform any latency calculations — it only renders the values provided by the Gateway.
 
+### Cost Protection
+
+The following cost guardrails are provisioned via CDK (Req 14):
+
+- **AWS Budget alert**: Email notification when monthly spend exceeds $10.
+- **Lambda max concurrency**: Event_Processor reserved concurrency capped at 10 to prevent DynamoDB flooding during traffic spikes.
+- **DynamoDB on-demand with write cap**: All tables use `PAY_PER_REQUEST` with a provisioned write capacity upper bound to cap costs during load testing.
+- **Teardown**: All ECS Fargate and App Runner services are torn down via `cdk destroy` after the presentation.
+
+> **Bonus (if time permits):** AWS WAF on App Runner with rate limiting (100 req/min per IP) and an IP allowlist exempting the load testing EC2 instance.
+
 ### Component Diagram
 
 ```mermaid
@@ -133,29 +144,42 @@ sequenceDiagram
     C->>A: GET /movies/:id
     A->>A: Fetch movie from MongoDB
     A-->>C: 200 OK { movie }
-    A->>SQS: SendMessage(View_Event{movieId, title, requestId, publishedAt, schemaVersion})
+    A->>SQS: SendMessage(View_Event{movieId, title, requestId, publishedAt, schemaVersion})<br/>(via onResponse hook, after response sent)
 
     Note over SQS,L: SQS triggers Lambda (batch ≤ 10)
 
     SQS->>L: SQSEvent [View_Event, ...]
-    L->>PE: PutItem(requestId) condition: attribute_not_exists
-    alt Duplicate (condition fails)
-        PE-->>L: ConditionalCheckFailedException → skip
-    else New event
-        PE-->>L: OK (item written, TTL = now+86400s)
-        L->>MS: UpdateItem ADD viewCount 1, SET lastViewedAt, updatedAt
+
+    loop For each event in batch
+        L->>PE: PutItem(requestId) condition: attribute_not_exists
+        alt Duplicate (condition fails)
+            PE-->>L: ConditionalCheckFailedException → mark as duplicate, skip
+        else New event
+            PE-->>L: OK (item written, TTL = now+86400s)
+        end
+    end
+
+    Note over L: Aggregate view counts by movieId across non-duplicate events
+
+    loop For each movieId in aggregated map
+        L->>MS: UpdateItem ADD viewCount :delta SET lastViewedAt, updatedAt
         MS-->>L: OK
+    end
+
+    loop For each non-duplicate event
         L->>RA: PutItem(pk="ACTIVITY", viewedAt=publishedAt, movieId, title, ttl=now+86400)
         RA-->>L: OK
-        L->>GW: POST /internal/notify { movieId, viewCount, publishedAt }
-        GW->>MS: Query GSI top-10 by viewCount
-        MS-->>GW: top-10 items
-        GW->>RA: Query recent activity (Limit 20, ScanIndexForward false)
-        RA-->>GW: recent activity items
-        GW->>GW: stamp ts = Date.now(), compute latency p50/p95/p99
-        GW-->>C: WebSocket push stats_update { top10, recentActivity, latency, connectedClients, ts, publishedAt, systemMetrics }
     end
-    L->>L: Publish CloudWatch Metrics (success/error counts, duration)
+
+    L->>GW: POST /internal/notify { updates: [{ movieId, delta, publishedAt }, ...] }
+    GW->>MS: Query GSI top-10 by viewCount
+    MS-->>GW: top-10 items
+    GW->>RA: Query recent activity (Limit 20, ScanIndexForward false)
+    RA-->>GW: recent activity items
+    GW->>GW: stamp ts = Date.now(), compute latency p50/p95/p99
+    GW-->>C: WebSocket push stats_update { top10, recentActivity, latency, connectedClients, ts, publishedAt, systemMetrics }
+
+    L->>L: Publish CloudWatch Metrics (BatchProcessingDuration, DuplicatesSkipped, DynamoWriteErrors)
 ```
 
 ---
@@ -184,14 +208,15 @@ service-a/src/
 ├── plugins/
 │   └── sqs.ts                  # Fastify plugin: registers SQS client + metrics counters
 │                               # decorated onto the instance as fastify.sqsPublisher
+│   └── cognito-auth.ts         # Fastify plugin: registers @fastify/jwt with Cognito JWKS endpoint
 ├── routes/
 │   └── metrics/
 │       └── metrics-routes.ts   # GET /metrics handler (autoloaded)
 │   └── movies/
 │       └── movie_id/
-│           └── movie-id-routes.ts  # MODIFIED: fire-and-forget publish after fetchMovie()
+│           └── movie-id-routes.ts  # MODIFIED: onResponse hook publish after fetchMovie()
 └── schemas/
-    └── dotenv.ts               # MODIFIED: add SQS_QUEUE_URL, AWS_REGION fields
+    └── dotenv.ts               # MODIFIED: add SQS_QUEUE_URL, AWS_REGION, COGNITO_JWKS_URL fields
 ```
 
 **SQS plugin** (`src/plugins/sqs.ts`):
@@ -202,34 +227,47 @@ service-a/src/
 - Declared dependency: `['server-config']` so `fastify.config` is available.
 
 **Integration point in `movie-id-routes.ts`**:
-The `fetchMovie` handler already calls `this.dataStore.fetchMovie(params.movie_id)`, which throws a 404 via `genNotFoundError` when the movie is not found. The SQS publish is inserted **after** the successful `fetchMovie` call and **before** `reply.send()`, as a non-awaited call:
+The `fetchMovie` handler already calls `this.dataStore.fetchMovie(params.movie_id)`, which throws a 404 via `genNotFoundError` when the movie is not found. The SQS publish is registered as an `onResponse` hook so it fires **after** the HTTP response is sent to the client. This guarantees the response is never delayed by the SQS call, and only 2xx responses trigger a publish (Req 1.5).
 
 ```typescript
-// Inside the GET /movies/:movie_id handler, after fetchMovie succeeds:
+// In movie-id-routes.ts — register onResponse hook after fetchMovie succeeds
 const movie = await this.dataStore.fetchMovie(params.movie_id);
-// fire-and-forget — does not delay the HTTP response
-this.sqsPublisher.publish({
-  schemaVersion: '1.0',
-  requestId: crypto.randomUUID(),
-  movieId: params.movie_id,
-  title: movie.title,
-  publishedAt: Number(request.headers['x-requested-at']) || Date.now()
-});
 reply.code(HttpStatusCodes.OK).send(movie);
+
+// onResponse hook fires after the response is sent — truly fire-and-forget
+reply.raw.on('finish', () => {
+  if (reply.statusCode >= 200 && reply.statusCode < 300) {
+    this.sqsPublisher.publish({
+      schemaVersion: '1.0',
+      requestId: crypto.randomUUID(),
+      movieId: params.movie_id,
+      title: movie.title,
+      publishedAt: Number(request.headers['x-requested-at']) || Date.now()
+    });
+  }
+});
 ```
 
 This placement ensures:
-- 404 responses (movie not found) never trigger a publish — `genNotFoundError` throws before the publish line is reached.
-- The HTTP response is never delayed by the SQS call.
+- 404 responses (movie not found) never trigger a publish — `genNotFoundError` throws before the hook is registered.
+- The HTTP response is never delayed by the SQS call — the hook fires after `reply.send()` completes.
 
 **Environment variables** (added to `src/schemas/dotenv.ts` TypeBox schema):
 
 ```typescript
-SQS_QUEUE_URL: Type.String(),   // required — no default
-AWS_REGION:    Type.String({ default: 'us-east-1' })
+SQS_QUEUE_URL:      Type.String(),   // required — no default
+AWS_REGION:         Type.String({ default: 'us-east-1' }),
+COGNITO_JWKS_URL:   Type.String()    // required — Cognito User Pool JWKS endpoint for JWT validation
 ```
 
-These are read via `fastify.config.SQS_QUEUE_URL` and `fastify.config.AWS_REGION` after `@fastify/env` validates them at startup. No secrets are hardcoded; values are injected at runtime via ECS Task Definition environment variables.
+These are read via `fastify.config.SQS_QUEUE_URL`, `fastify.config.AWS_REGION`, and `fastify.config.COGNITO_JWKS_URL` after `@fastify/env` validates them at startup. No secrets are hardcoded; values are injected at runtime via App Runner configuration environment variables.
+
+**CloudWatch metrics** (Req 15): Service A publishes the following custom metrics to CloudWatch under the `AnalyticsDashboard` namespace via `PutMetricData`. The Service A IAM role must include `cloudwatch:PutMetricData`.
+- `GetMovieInvocations` — count of `GET /movies/:id` requests per interval
+- `SqsPublishErrors` — count of failed SQS publish attempts per interval
+- `SqsPublishLatency` — time taken to publish each View_Event to SQS (ms)
+
+**Container image**: The Service A Docker image is built and pushed to **AWS ECR**. The App Runner service is configured to pull from ECR. Environment variables (SQS URL, MongoDB URL, Cognito config) are injected at runtime via App Runner environment configuration — no secrets hardcoded in the image.
 
 **Dockerfile** (multi-stage TypeScript build):
 
@@ -262,18 +300,19 @@ Default port is **3000** (`APP_PORT=3000` in `.env.sample`; the Docker host port
 
 **Trigger**: SQS event source mapping on `view-events` queue, batch size 10, `FunctionResponseTypes: [ReportBatchItemFailures]`.
 
-**Processing logic per event**:
-1. Parse `View_Event` from SQS message body.
-2. `PutItem` on `ProcessedEvents` with `ConditionExpression: attribute_not_exists(requestId)`.
-   - If `ConditionalCheckFailedException` → skip (duplicate).
-3. `UpdateItem` on `MovieStats`: `ADD viewCount :one SET lastViewedAt = :ts, updatedAt = :now`.
-4. `PutItem` on `RecentActivity`: `{ pk: "ACTIVITY", viewedAt: publishedAt, movieId, title, ttl: Math.floor(Date.now()/1000) + 86400 }`.
-5. `POST /internal/notify` to Gateway with `{ movieId, viewCount, publishedAt }` — includes `X-Internal-Secret` header.
-6. Emit CloudWatch Metrics: `EventsProcessed` (count), `EventsFailed` (count), `EventProcessingDuration` (ms).
+**Processing logic (per batch)**:
+1. Parse all `View_Event` records from the SQS batch.
+2. For each event, perform a conditional `PutItem` on `ProcessedEvents` with `ConditionExpression: attribute_not_exists(requestId)`.
+   - If `ConditionalCheckFailedException` → mark as duplicate, skip from aggregation.
+3. Aggregate view counts by `movieId` across all non-duplicate events in the batch (e.g. 3 events for movie A + 2 for movie B → `{ "movieA": 3, "movieB": 2 }`).
+4. For each `movieId` in the aggregated map, perform one `UpdateItem` on `MovieStats`: `ADD viewCount :delta SET lastViewedAt = :ts, updatedAt = :now` where `:delta` is the aggregated count.
+5. For each non-duplicate event, `PutItem` on `RecentActivity`: `{ pk: "ACTIVITY", viewedAt: publishedAt, movieId, title, ttl: Math.floor(Date.now()/1000) + 86400 }`.
+6. After all writes succeed, send ONE HTTP POST notification to the Gateway with the aggregated results: `POST /internal/notify { updates: [{ movieId, delta, publishedAt }, ...] }` — includes `X-Internal-Secret` header. This single notification is sent once per batch, not once per event.
+7. Emit CloudWatch Metrics: `BatchProcessingDuration` (ms), `DuplicatesSkipped` (count), `DynamoWriteErrors` (count).
 
 **Batch failure handling**: Use `ReportBatchItemFailures` — return failed `itemIdentifier`s so SQS only retries failed messages, not the whole batch.
 
-**Environment variables**: `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_EVENTS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `GATEWAY_INTERNAL_URL`, `INTERNAL_SECRET`, `AWS_REGION`.
+**Environment variables**: `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_EVENTS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `GATEWAY_INTERNAL_URL`, `INTERNAL_SECRET`, `AWS_REGION`, `SQS_BATCH_SIZE` (default 10 — controls the SQS event source mapping batch size without redeployment).
 
 ---
 
@@ -297,9 +336,10 @@ Default port is **3000** (`APP_PORT=3000` in `.env.sample`; the Docker host port
 
 **Notification handling** (`POST /internal/notify`):
 1. Validate `X-Internal-Secret` header — return HTTP 403 if missing or incorrect.
-2. Receive `{ movieId, viewCount, publishedAt }`.
-3. If backpressure is active (event rate > 100/s): enqueue update; coalesced push fires at most 1/s per client.
-4. Otherwise: query DynamoDB top-10 and RecentActivity immediately; stamp `ts = Date.now()`; compute `latencyMs = ts - publishedAt`; update rolling 60s latency window; compute p50/p95/p99; attach latest `systemMetrics` data point; broadcast `stats_update` to all clients.
+2. Receive `{ updates: [{ movieId, delta, publishedAt }, ...] }` — one entry per unique `movieId` in the processed batch.
+3. Use the `publishedAt` from the earliest event in the batch for end-to-end latency calculation.
+4. If backpressure is active (event rate > 100/s): enqueue update; coalesced push fires at most 1/s per client.
+5. Otherwise: query DynamoDB top-10 and RecentActivity immediately; stamp `ts = Date.now()`; compute `latencyMs = ts - publishedAt`; update rolling 60s latency window; compute p50/p95/p99; attach latest `systemMetrics` data point; broadcast ONE `stats_update` to all clients.
 
 **CloudWatch metrics polling**:
 - On startup, the Gateway starts a polling loop that calls `GetMetricData` every `CLOUDWATCH_POLL_INTERVAL_MS` (default 5000 ms).
@@ -330,10 +370,36 @@ Default port is **3000** (`APP_PORT=3000` in `.env.sample`; the Docker host port
 
 **Reconnection strategy**: Exponential backoff starting at 1000 ms, multiplier 2, cap 30 000 ms, max 10 attempts. Display "Reconnecting..." during attempts; display "Connection lost. Please refresh the page." after 10 failures.
 
-**Latency chart**:
-- On each `stats_update`, read `latency.p50`, `latency.p95`, `latency.p99` directly from the message payload (computed server-side by the Gateway).
-- Append `{ ts, p50, p95, p99 }` to the local `latencyHistory` array.
-- Render as a multi-line Chart.js chart (time on x-axis, ms on y-axis, 3 lines). No client-side percentile calculations.
+**Chart inventory**:
+
+**Analytics Section (required):**
+- Top 10 most viewed movies — scrollable ranked list rendered as `"#1 <title> — <viewCount> views"`
+- Recent activity feed — scrollable list rendered as `"<title> — <timestamp>"`
+- Connected users count — single large number display
+
+**Latency Section (bonus):**
+- End-to-end latency p50/p95/p99 — multi-line Chart.js chart (time on x-axis, ms on y-axis, 3 lines); data from `latency` field in `stats_update`
+- Throughput (view events/second) — line chart; data from `systemMetrics.gateway.viewEventsPerSecond`
+
+**Service A Section (bonus):**
+- `GET /movies/:id` invocations/sec — line chart; data from `systemMetrics.serviceA` (via CloudWatch `GetMovieInvocations`)
+- SQS publish latency — line chart; data from CloudWatch `SqsPublishLatency`
+- SQS publish errors — line chart; data from CloudWatch `SqsPublishErrors`
+
+**Lambda Section (bonus):**
+- Invocations/sec, batch processing duration, error rate, duplicates skipped — line charts; data from `systemMetrics.lambda`
+
+**SQS Section (bonus):**
+- Queue depth over time, messages sent/deleted — line charts; data from `systemMetrics.sqs`
+
+**Gateway Section (bonus):**
+- Connected clients over time — line chart; data from `systemMetrics.gateway.connectedClients`
+- Backpressure state — colored indicator (green = inactive, red = active); data from `systemMetrics.gateway.backpressureActive`
+
+**ECS Section (bonus):**
+- CPU% and memory% over time — line charts; data from `systemMetrics.serviceA.cpuPercent` / `memoryPercent`
+
+All time-series charts use `ts` (epoch ms) on the x-axis. The UI appends data points to local history arrays and re-renders — no client-side calculations.
 
 ---
 
