@@ -317,7 +317,11 @@ Default port is **3000** (`APP_PORT=3000` in `.env.sample`; the Docker host port
 
 **Batch failure handling**: Use `ReportBatchItemFailures` — return failed `itemIdentifier`s so SQS only retries failed messages, not the whole batch.
 
-**Environment variables**: `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_EVENTS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `GATEWAY_INTERNAL_URL`, `INTERNAL_SECRET`, `AWS_REGION`, `SQS_BATCH_SIZE` (default 10 — controls the SQS event source mapping batch size without redeployment).
+**Environment variables**: `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_EVENTS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `GATEWAY_INTERNAL_URL`, `INTERNAL_SECRET_ARN`, `AWS_REGION_NAME`, `SQS_BATCH_SIZE` (default 10 — controls the SQS event source mapping batch size without redeployment).
+
+> **INTERNAL_SECRET injection pattern**: CDK injects `INTERNAL_SECRET_ARN` (the SSM parameter ARN) as a plaintext env var, not the secret value itself. The Lambda function reads the ARN at cold start and calls `SSM:GetParameter` with `WithDecryption: true` to fetch the actual secret. This keeps the secret out of CloudFormation templates and Lambda environment variable storage (both of which are visible in the AWS Console). The `event-processor-role` has `ssm:GetParameter` permission on `/analytics/INTERNAL_SECRET` via `internalSecretParam.grantRead(role)`.
+>
+> Note: `AWS_REGION` is a reserved Lambda environment variable name — use `AWS_REGION_NAME` in CDK and read `process.env.AWS_REGION_NAME || process.env.AWS_REGION` in the Lambda code.
 
 ---
 

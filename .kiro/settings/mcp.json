@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mongodb": {
+      "command": "npx",
+      "args": ["-y", "mongodb-mcp-server"],
+      "env": {
+        "MDB_MCP_CONNECTION_STRING": "mongodb+srv://app-user:<password>@<cluster>.mongodb.net/movies?retryWrites=true&w=majority"
+      }
+    }
+  }
+}

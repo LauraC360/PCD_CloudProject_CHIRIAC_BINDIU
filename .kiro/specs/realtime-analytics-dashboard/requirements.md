@@ -245,6 +245,10 @@ README.md               ← root build/deploy/test instructions
 
 1. AN AWS Budget alert SHALL be configured to send an email notification when monthly spend exceeds $10.
 2. THE Lambda Event_Processor SHALL have a maximum concurrency limit set (e.g. 10) to prevent runaway invocations from flooding DynamoDB during unexpected traffic spikes.
+
+> **Note — Account Concurrency Limit**: New AWS accounts have an applied quota of 10 concurrent executions (not the standard 1000 default). Setting `reservedConcurrentExecutions: 10` fails because AWS requires a minimum of 10 unreserved executions at all times, leaving 0 available. The CDK construct has this value commented out pending a quota increase. To enable it: go to Service Quotas → Lambda → "Concurrent executions" → Request increase to 100 (auto-approved for new accounts). Once approved, uncomment `reservedConcurrentExecutions: 10` in `infra/lib/infra-stack.ts` and redeploy.
+>
+> **Current status**: `reservedConcurrentExecutions` is NOT set on the deployed Lambda — the function uses the shared unreserved pool (max 10 total for the account). This is a known limitation of the new account and does not affect functionality for the demo. To fix: contact AWS Support and request a Lambda concurrent executions quota increase to 200 for us-east-1.
 3. THE DynamoDB tables SHALL use on-demand capacity mode with a maximum write capacity limit configured to cap costs during load testing.
 4. ALL ECS Fargate services and App Runner services SHALL be torn down via `cdk destroy` after the presentation to prevent ongoing costs.
 

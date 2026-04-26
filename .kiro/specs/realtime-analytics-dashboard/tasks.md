@@ -65,11 +65,11 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 ### Task 2: CDK — Lambda Event Processor
 
-- [ ] 2.1 Create IAM role `event-processor-role`: `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueAttributes`, `sqs:ChangeMessageVisibility`, `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:GetItem`, `cloudwatch:PutMetricData`, `logs:*`
-- [ ] 2.2 Create Lambda function `event-processor`: runtime `nodejs22.x`, timeout 30s, memory 256MB, reserved concurrency 10; inject env vars `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_EVENTS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `GATEWAY_INTERNAL_URL=http://wsg.local:8081`, `INTERNAL_SECRET` (from SSM), `AWS_REGION`, `SQS_BATCH_SIZE=10`; place in VPC private subnets
-- [ ] 2.3 Create SQS event source mapping: `view-events` → `event-processor`, batch size 10 (configurable via `SQS_BATCH_SIZE` env var), `ReportBatchItemFailures` enabled
-- [ ] 2.4 Add Lambda to same VPC security group that can reach the WSG Cloud Map service on port 8081
-- [ ] 2.5 Verify: Lambda function exists in AWS Console with correct timeout, memory, concurrency, and env vars; SQS event source mapping shows as `Enabled`; send a test SQS message and confirm Lambda invocation in CloudWatch Logs
+- [x] 2.1 Create IAM role `event-processor-role`: `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueAttributes`, `sqs:ChangeMessageVisibility`, `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:GetItem`, `cloudwatch:PutMetricData`, `logs:*`
+- [x] 2.2 Create Lambda function `event-processor`: runtime `nodejs22.x`, timeout 30s, memory 256MB, reserved concurrency 10; inject env vars `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_EVENTS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `GATEWAY_INTERNAL_URL=http://wsg.local:8081`, `INTERNAL_SECRET` (from SSM), `AWS_REGION`, `SQS_BATCH_SIZE=10`; place in VPC private subnets
+- [x] 2.3 Create SQS event source mapping: `view-events` → `event-processor`, batch size 10 (configurable via `SQS_BATCH_SIZE` env var), `ReportBatchItemFailures` enabled
+- [x] 2.4 Add Lambda to same VPC security group that can reach the WSG Cloud Map service on port 8081
+- [x] 2.5 Verify: Lambda function exists in AWS Console with correct timeout, memory, concurrency, and env vars; SQS event source mapping shows as `Enabled`; send a test SQS message and confirm Lambda invocation in CloudWatch Logs
 
 **Validates:** Requirements 2.2, 3.1, 3.5, 14.2
 
@@ -87,6 +87,19 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 - [ ] 3.8 Verify: ECS service shows 1/1 running tasks; ALB health check passes; `curl https://<ALB_DOMAIN>/health` returns 200; port 8081 is NOT reachable from outside the VPC
 
 **Validates:** Requirements 5.9, 5.10, 10.7
+
+---
+
+### Task 3.5: MongoDB Atlas Setup (Manual — before Task 4)
+
+- [x] 3.5.1 Create a free MongoDB Atlas cluster at https://cloud.mongodb.com (M0 free tier is sufficient)
+- [x] 3.5.2 Create a database user with read/write access to the movies database
+- [x] 3.5.3 Set IP allowlist to `0.0.0.0/0` — required because App Runner has dynamic outbound IPs; a static allowlist is not feasible
+- [x] 3.5.4 Copy the connection string (format: `mongodb+srv://<user>:<password>@<cluster>.mongodb.net/<dbname>?retryWrites=true&w=majority`)
+- [~] 3.5.5 Store it in SSM: `bash infrastructure/ssm/create-ssm-params.sh --mongo` — paste the connection string when prompted (input is hidden, never stored in source)
+- [~] 3.5.6 Verify: `aws ssm get-parameter --name /analytics/MONGO_URL --with-decryption --profile pers --region us-east-1` returns the parameter (value will be encrypted in output)
+
+**Validates:** Requirements 10.9
 
 ---
 

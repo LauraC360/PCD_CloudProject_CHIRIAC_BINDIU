@@ -3,6 +3,9 @@ import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
@@ -20,6 +23,13 @@ export class InfraStack extends cdk.Stack {
   // via infrastructure/ssm/create-ssm-params.sh
   public readonly internalSecretParam: ssm.IStringParameter;
   public readonly mongoUrlParam: ssm.IStringParameter;
+  // IAM role for Lambda event-processor (Task 2.1)
+  public readonly eventProcessorRole: iam.Role;
+  // Lambda function: event-processor (Task 2.2)
+  public readonly eventProcessorFn: lambda.Function;
+  // Security groups (Task 2.4) — created together so they can reference each other
+  public readonly lambdaSg: ec2.SecurityGroup;  // assigned to Lambda
+  public readonly wsgSg: ec2.SecurityGroup;     // assigned to WSG ECS task (used in Task 3.6)
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -224,6 +234,151 @@ export class InfraStack extends cdk.Stack {
       this,
       'MongoUrlParam',
       { parameterName: '/analytics/MONGO_URL' },
+    );
+
+    // Security groups (Task 2.4)
+    // lambdaSg: assigned to Lambda — allows outbound to WSG on port 8081
+    // wsgSg:    assigned to WSG ECS task — allows inbound 8081 from Lambda only,
+    //           inbound 8080 from ALB (ALB SG added in Task 3.5)
+    this.lambdaSg = new ec2.SecurityGroup(this, 'LambdaSg', {
+      vpc: this.vpc,
+      securityGroupName: 'lambda-event-processor-sg',
+      description: 'Security group for event-processor Lambda - outbound to WSG on 8081',
+      allowAllOutbound: true, // Lambda needs outbound to DynamoDB, SSM, CloudWatch, WSG
+    });
+
+    this.wsgSg = new ec2.SecurityGroup(this, 'WsgSg', {
+      vpc: this.vpc,
+      securityGroupName: 'wsg-ecs-sg',
+      description: 'Security group for WebSocket Gateway ECS task',
+      allowAllOutbound: true,
+    });
+
+    // Allow Lambda → WSG on internal port 8081 (not exposed via ALB)
+    this.wsgSg.addIngressRule(
+      this.lambdaSg,
+      ec2.Port.tcp(8081),
+      'Allow Lambda event-processor to POST /internal/notify',
+    );
+
+    // IAM role: event-processor-role (Task 2.1)
+    // Least-privilege permissions for Lambda to consume SQS, write to
+    // DynamoDB tables, publish CloudWatch metrics, and write logs.
+    this.eventProcessorRole = new iam.Role(this, 'EventProcessorRole', {
+      roleName: 'event-processor-role',
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      description: 'Execution role for the event-processor Lambda function',
+    });
+
+    // SQS — consume messages from view-events queue
+    this.eventProcessorRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'SqsConsume',
+      actions: [
+        'sqs:ReceiveMessage',
+        'sqs:DeleteMessage',
+        'sqs:GetQueueAttributes',
+        'sqs:ChangeMessageVisibility',
+      ],
+      resources: [this.viewEventsQueue.queueArn],
+    }));
+
+    // DynamoDB — write to all three analytics tables
+    this.eventProcessorRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'DynamoDbWrite',
+      actions: [
+        'dynamodb:PutItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:GetItem',
+      ],
+      resources: [
+        this.movieStatsTable.tableArn,
+        this.processedEventsTable.tableArn,
+        this.recentActivityTable.tableArn,
+      ],
+    }));
+
+    // CloudWatch — publish custom metrics
+    this.eventProcessorRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CloudWatchMetrics',
+      actions: ['cloudwatch:PutMetricData'],
+      resources: ['*'], // PutMetricData does not support resource-level restrictions
+    }));
+
+    // CloudWatch Logs — write Lambda execution logs
+    this.eventProcessorRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CloudWatchLogs',
+      actions: ['logs:*'],
+      resources: ['*'],
+    }));
+
+    // EC2 VPC — required for Lambda to attach to VPC (create/describe/delete ENIs)
+    this.eventProcessorRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'Ec2Eni',
+      actions: [
+        'ec2:CreateNetworkInterface',
+        'ec2:DescribeNetworkInterfaces',
+        'ec2:DeleteNetworkInterface',
+      ],
+      resources: ['*'],
+    }));
+
+    // SSM — read the INTERNAL_SECRET SecureString at runtime
+    this.internalSecretParam.grantRead(this.eventProcessorRole);
+
+    new cdk.CfnOutput(this, 'EventProcessorRoleArn', {
+      value: this.eventProcessorRole.roleArn,
+      description: 'IAM role ARN for event-processor Lambda',
+      exportName: 'AnalyticsEventProcessorRoleArn',
+    });
+
+    // Lambda function: event-processor (Task 2.2)
+    // Runtime: nodejs22.x, timeout 30s, memory 256MB, reserved concurrency 10
+    // Placed in VPC private subnets so it can reach wsg.local via Cloud Map DNS
+    // INTERNAL_SECRET_ARN is injected so the function fetches the value at runtime
+    // via SSM GetParameter — avoids the secret appearing in CloudFormation plaintext
+    this.eventProcessorFn = new lambda.Function(this, 'EventProcessorFn', {
+      functionName: 'event-processor',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: 'src/handler.handler',
+      code: lambda.Code.fromAsset('../event-processor', {
+        exclude: ['node_modules', '*.test.js', 'coverage', '.env*'],
+      }),
+      role: this.eventProcessorRole,
+      timeout: Duration.seconds(30),
+      memorySize: 256,
+      // reservedConcurrentExecutions: 10,
+      // Cannot set reserved concurrency until account quota is increased above 10.
+      // New accounts are capped at 10 total — AWS requires minimum 10 unreserved,
+      // making it impossible to reserve any. Request increase to 100 at:
+      // Service Quotas → Lambda → Concurrent executions → Request increase at account level
+      vpc: this.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+      securityGroups: [this.lambdaSg],
+      environment: {
+        DYNAMODB_TABLE_STATS:            this.movieStatsTable.tableName,
+        DYNAMODB_TABLE_EVENTS:           this.processedEventsTable.tableName,
+        DYNAMODB_TABLE_RECENT_ACTIVITY:  this.recentActivityTable.tableName,
+        GATEWAY_INTERNAL_URL:            'http://wsg.local:8081',
+        // Secret fetched at runtime via SSM GetParameter using this ARN
+        INTERNAL_SECRET_ARN:             this.internalSecretParam.parameterArn,
+        AWS_REGION_NAME:                 this.region,
+        SQS_BATCH_SIZE:                  '10',
+      },
+    });
+
+    new cdk.CfnOutput(this, 'EventProcessorFnArn', {
+      value: this.eventProcessorFn.functionArn,
+      description: 'ARN of the event-processor Lambda function',
+      exportName: 'AnalyticsEventProcessorFnArn',
+    });
+
+    // SQS event source mapping: view-events → event-processor (Task 2.3)
+    // batch size 10, ReportBatchItemFailures so only failed messages are retried
+    this.eventProcessorFn.addEventSource(
+      new lambdaEventSources.SqsEventSource(this.viewEventsQueue, {
+        batchSize: 10,
+        reportBatchItemFailures: true,
+      }),
     );
   }
 }
