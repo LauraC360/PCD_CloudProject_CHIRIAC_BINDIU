@@ -49,7 +49,7 @@
       const tr = document.createElement('tr');
       const td = document.createElement('td');
       td.setAttribute('colspan', '4');
-      td.className = 'px-5 py-8 text-center text-gray-600 text-sm';
+      td.className = 'px-5 py-8 text-center text-blue-500 text-sm';
       td.textContent = 'No data yet';
       tr.appendChild(td);
       tbody.appendChild(tr);
@@ -64,28 +64,28 @@
     sorted.forEach(function (item, index) {
       const rank = index + 1;
       const tr = document.createElement('tr');
-      tr.className = 'hover:bg-gray-800 transition-colors text-sm';
+      tr.className = 'hover:bg-blue-50 transition-colors text-sm';
 
       // # (rank)
       const tdRank = document.createElement('td');
-      tdRank.className = 'px-5 py-3 text-gray-500 tabular-nums';
+      tdRank.className = 'px-5 py-3 text-blue-600 tabular-nums font-medium';
       tdRank.textContent = String(rank);
 
       // Movie ID
       const tdMovieId = document.createElement('td');
-      tdMovieId.className = 'px-5 py-3 text-indigo-400 font-medium';
+      tdMovieId.className = 'px-5 py-3 text-purple-600 font-semibold';
       tdMovieId.textContent = item.movieId != null ? String(item.movieId) : '—';
 
       // Views (formatted with toLocaleString)
       const tdViews = document.createElement('td');
-      tdViews.className = 'px-5 py-3 text-right text-gray-100 tabular-nums';
+      tdViews.className = 'px-5 py-3 text-right text-blue-700 tabular-nums font-medium';
       tdViews.textContent = item.viewCount != null
         ? Number(item.viewCount).toLocaleString()
         : '—';
 
       // Last Viewed (formatted as locale time string)
       const tdLastViewed = document.createElement('td');
-      tdLastViewed.className = 'px-5 py-3 text-right text-gray-400 hidden sm:table-cell';
+      tdLastViewed.className = 'px-5 py-3 text-right text-blue-600 hidden sm:table-cell text-xs';
       if (item.lastViewedAt) {
         try {
           tdLastViewed.textContent = new Date(item.lastViewedAt).toLocaleTimeString();
@@ -149,16 +149,16 @@
 
     // Build new <li>
     const li = document.createElement('li');
-    li.className = 'px-5 py-3 text-sm flex items-center justify-between gap-3 bg-gray-900 hover:bg-gray-800 transition-colors';
+    li.className = 'px-5 py-3 text-sm flex items-center justify-between gap-3 bg-purple-50 hover:bg-purple-100 transition-colors';
 
     // Movie ID (prominent)
     const movieSpan = document.createElement('span');
-    movieSpan.className = 'font-medium text-indigo-400 truncate';
+    movieSpan.className = 'font-semibold text-blue-600 truncate';
     movieSpan.textContent = movieId != null ? String(movieId) : '—';
 
     // Timestamp
     const timeSpan = document.createElement('span');
-    timeSpan.className = 'text-gray-500 text-xs whitespace-nowrap flex-shrink-0';
+    timeSpan.className = 'text-purple-600 text-xs whitespace-nowrap flex-shrink-0';
     if (lastViewedAt) {
       try {
         timeSpan.textContent = new Date(lastViewedAt).toLocaleTimeString();

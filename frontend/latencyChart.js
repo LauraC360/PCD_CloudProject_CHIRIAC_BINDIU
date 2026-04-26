@@ -194,9 +194,9 @@
             {
               label: 'p50',
               data: p50Data,
-              borderColor: 'rgb(129, 140, 248)',   // indigo-400
-              backgroundColor: 'rgba(129, 140, 248, 0.08)',
-              borderWidth: 2,
+              borderColor: 'rgb(96, 165, 250)',   // blue-400 (pastel)
+              backgroundColor: 'rgba(96, 165, 250, 0.1)',
+              borderWidth: 2.5,
               pointRadius: 0,
               tension: 0.3,
               fill: false,
@@ -204,9 +204,9 @@
             {
               label: 'p95',
               data: p95Data,
-              borderColor: 'rgb(251, 191, 36)',    // amber-400
-              backgroundColor: 'rgba(251, 191, 36, 0.08)',
-              borderWidth: 2,
+              borderColor: 'rgb(168, 85, 247)',    // purple-500 (pastel)
+              backgroundColor: 'rgba(168, 85, 247, 0.1)',
+              borderWidth: 2.5,
               pointRadius: 0,
               tension: 0.3,
               fill: false,
@@ -214,9 +214,9 @@
             {
               label: 'p99',
               data: p99Data,
-              borderColor: 'rgb(251, 113, 133)',   // rose-400
-              backgroundColor: 'rgba(251, 113, 133, 0.08)',
-              borderWidth: 2,
+              borderColor: 'rgb(236, 72, 153)',   // pink-500 (pastel)
+              backgroundColor: 'rgba(236, 72, 153, 0.1)',
+              borderWidth: 2.5,
               pointRadius: 0,
               tension: 0.3,
               fill: false,
@@ -235,9 +235,13 @@
             legend: {
               display: true,
               labels: {
-                color: 'rgb(156, 163, 175)',  // gray-400
+                color: 'rgb(100, 116, 139)',  // slate-500
                 boxWidth: 12,
                 padding: 16,
+                font: {
+                  size: 12,
+                  weight: '500',
+                },
               },
             },
             tooltip: {
@@ -246,31 +250,46 @@
                   return ctx.dataset.label + ': ' + (ctx.parsed.y != null ? ctx.parsed.y + ' ms' : '—');
                 },
               },
+              backgroundColor: 'rgba(255, 255, 255, 0.95)',
+              titleColor: 'rgb(71, 85, 105)',
+              bodyColor: 'rgb(71, 85, 105)',
+              borderColor: 'rgb(226, 232, 240)',
+              borderWidth: 1,
             },
           },
           scales: {
             x: {
               ticks: {
-                color: 'rgb(107, 114, 128)',  // gray-500
+                color: 'rgb(120, 113, 108)',  // slate-600
                 maxTicksLimit: 8,
                 maxRotation: 0,
+                font: {
+                  size: 11,
+                },
               },
               grid: {
-                color: 'rgba(55, 65, 81, 0.6)',  // gray-700 / 60%
+                color: 'rgba(226, 232, 240, 0.5)',  // slate-200 / 50%
               },
             },
             y: {
               title: {
                 display: true,
                 text: 'Latency (ms)',
-                color: 'rgb(107, 114, 128)',
+                color: 'rgb(71, 85, 105)',
+                font: {
+                  size: 12,
+                  weight: '600',
+                },
               },
               ticks: {
-                color: 'rgb(107, 114, 128)',
+                color: 'rgb(120, 113, 108)',
                 callback: function (value) { return value + ' ms'; },
+                font: {
+                  size: 11,
+                },
               },
               grid: {
-                color: 'rgba(55, 65, 81, 0.6)',
+                color: 'rgba(226, 232, 240, 0.5)',
               },
               beginAtZero: true,
             },

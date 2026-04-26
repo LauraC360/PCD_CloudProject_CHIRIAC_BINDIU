@@ -16,19 +16,19 @@
     window.GATEWAY_WS_URL = window.GATEWAY_WS_URL || 'ws://localhost:8080/ws';
   </script>
 </head>
-<body class="bg-gray-950 text-gray-100 min-h-screen font-sans antialiased">
+<body class="bg-white text-slate-700 min-h-screen font-sans antialiased">
 
   <!-- ===== HEADER ===== -->
-  <header class="bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+  <header class="bg-gradient-to-r from-blue-100 via-purple-100 to-blue-100 border-b border-purple-200 px-6 py-4 flex items-center justify-between shadow-sm">
     <div class="flex items-center gap-3">
-      <svg class="w-7 h-7 text-indigo-400" fill="none" stroke="currentColor" stroke-width="1.8"
+      <svg class="w-7 h-7 text-purple-500" fill="none" stroke="currentColor" stroke-width="1.8"
            viewBox="0 0 24 24" aria-hidden="true">
         <path stroke-linecap="round" stroke-linejoin="round"
               d="M3 13.5l4-4 4 4 4-6 4 4" />
         <path stroke-linecap="round" stroke-linejoin="round"
               d="M3 20h18" />
       </svg>
-      <h1 class="text-xl font-semibold tracking-tight text-white">
+      <h1 class="text-xl font-semibold tracking-tight text-purple-700">
         Realtime Analytics Dashboard
       </h1>
     </div>
@@ -36,10 +36,10 @@
     <!-- Connection status badge -->
     <div class="flex items-center gap-2" aria-live="polite" aria-atomic="true">
       <span id="connection-dot"
-            class="inline-block w-2.5 h-2.5 rounded-full bg-gray-500"
+            class="inline-block w-2.5 h-2.5 rounded-full bg-purple-300"
             aria-hidden="true"></span>
       <span id="connection-status"
-            class="text-sm font-medium text-gray-400">
+            class="text-sm font-medium text-purple-600">
         Connecting…
       </span>
     </div>
@@ -53,36 +53,36 @@
       <h2 id="overview-heading" class="sr-only">Overview</h2>
 
       <!-- Connected users counter -->
-      <article class="bg-gray-900 rounded-xl border border-gray-800 p-5 flex flex-col gap-1">
-        <p class="text-xs font-semibold uppercase tracking-widest text-gray-500">
+      <article class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl border border-blue-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-blue-600">
           Connected Users
         </p>
         <p id="connected-clients"
-           class="text-4xl font-bold tabular-nums text-indigo-400"
+           class="text-4xl font-bold tabular-nums text-purple-600"
            aria-label="Connected users count">
           —
         </p>
       </article>
 
       <!-- Total events (populated by app.js) -->
-      <article class="bg-gray-900 rounded-xl border border-gray-800 p-5 flex flex-col gap-1">
-        <p class="text-xs font-semibold uppercase tracking-widest text-gray-500">
+      <article class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl border border-purple-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-purple-600">
           Total Views (top 10)
         </p>
         <p id="total-views"
-           class="text-4xl font-bold tabular-nums text-emerald-400"
+           class="text-4xl font-bold tabular-nums text-blue-600"
            aria-label="Total views across top 10 movies">
           —
         </p>
       </article>
 
       <!-- Last update timestamp -->
-      <article class="bg-gray-900 rounded-xl border border-gray-800 p-5 flex flex-col gap-1">
-        <p class="text-xs font-semibold uppercase tracking-widest text-gray-500">
+      <article class="bg-gradient-to-br from-pink-50 to-pink-100 rounded-xl border border-pink-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-pink-600">
           Last Update
         </p>
         <p id="last-update"
-           class="text-sm font-medium text-gray-300 mt-1"
+           class="text-sm font-medium text-pink-700 mt-1"
            aria-label="Timestamp of last received update">
           —
         </p>
@@ -94,29 +94,29 @@
 
       <!-- Top Movies table (spans 2 of 3 columns on large screens) -->
       <section aria-labelledby="top-movies-heading"
-               class="lg:col-span-2 bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-        <header class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-          <h2 id="top-movies-heading" class="text-base font-semibold text-white">
+               class="lg:col-span-2 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl border border-blue-200 overflow-hidden shadow-sm">
+        <header class="px-5 py-4 border-b border-blue-200 flex items-center justify-between bg-blue-100">
+          <h2 id="top-movies-heading" class="text-base font-semibold text-blue-700">
             Top Movies by Views
           </h2>
-          <span class="text-xs text-gray-500">Live · top 10</span>
+          <span class="text-xs text-blue-600">Live · top 10</span>
         </header>
 
         <div class="overflow-x-auto">
           <table class="w-full text-sm" aria-label="Top movies by view count">
             <thead>
               <tr class="text-left text-xs font-semibold uppercase tracking-wider
-                         text-gray-500 border-b border-gray-800">
+                         text-blue-700 border-b border-blue-200 bg-blue-50">
                 <th scope="col" class="px-5 py-3 w-8">#</th>
                 <th scope="col" class="px-5 py-3">Movie ID</th>
                 <th scope="col" class="px-5 py-3 text-right">Views</th>
                 <th scope="col" class="px-5 py-3 text-right hidden sm:table-cell">Last Viewed</th>
               </tr>
             </thead>
-            <tbody id="top-movies-tbody" class="divide-y divide-gray-800">
+            <tbody id="top-movies-tbody" class="divide-y divide-blue-200">
               <!-- Rows injected by dashboard.js -->
               <tr>
-                <td colspan="4" class="px-5 py-8 text-center text-gray-600 text-sm">
+                <td colspan="4" class="px-5 py-8 text-center text-blue-500 text-sm">
                   Waiting for data…
                 </td>
               </tr>
@@ -127,21 +127,21 @@
 
       <!-- Recent Activity feed -->
       <section aria-labelledby="activity-heading"
-               class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden flex flex-col">
-        <header class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-          <h2 id="activity-heading" class="text-base font-semibold text-white">
+               class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl border border-purple-200 overflow-hidden flex flex-col shadow-sm">
+        <header class="px-5 py-4 border-b border-purple-200 flex items-center justify-between bg-purple-100">
+          <h2 id="activity-heading" class="text-base font-semibold text-purple-700">
             Recent Activity
           </h2>
-          <span class="text-xs text-gray-500">Last 20 events</span>
+          <span class="text-xs text-purple-600">Last 20 events</span>
         </header>
 
         <ol id="activity-feed"
             aria-label="Recent view activity"
             aria-live="polite"
             aria-relevant="additions"
-            class="flex-1 overflow-y-auto divide-y divide-gray-800 max-h-80">
+            class="flex-1 overflow-y-auto divide-y divide-purple-200 max-h-80">
           <!-- Items prepended by dashboard.js -->
-          <li class="px-5 py-4 text-sm text-gray-600">
+          <li class="px-5 py-4 text-sm text-purple-500">
             Waiting for activity…
           </li>
         </ol>
@@ -150,25 +150,25 @@
 
     <!-- ── Row 3: Latency chart ── -->
     <section aria-labelledby="latency-heading"
-             class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-      <header class="px-5 py-4 border-b border-gray-800 flex items-center justify-between flex-wrap gap-2">
-        <h2 id="latency-heading" class="text-base font-semibold text-white">
+             class="bg-gradient-to-br from-pink-50 to-pink-100 rounded-xl border border-pink-200 overflow-hidden shadow-sm">
+      <header class="px-5 py-4 border-b border-pink-200 flex items-center justify-between flex-wrap gap-2 bg-pink-100">
+        <h2 id="latency-heading" class="text-base font-semibold text-pink-700">
           End-to-End Latency
         </h2>
-        <div class="flex items-center gap-4 text-xs text-gray-400">
+        <div class="flex items-center gap-4 text-xs text-pink-600">
           <span>60-second sliding window</span>
           <!-- Percentile badges (updated by latencyChart.js) -->
           <span class="flex items-center gap-1">
-            <span class="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
-            p50: <strong id="latency-p50" class="text-indigo-300 ml-0.5">—</strong> ms
+            <span class="inline-block w-2 h-2 rounded-full bg-blue-400"></span>
+            p50: <strong id="latency-p50" class="text-blue-600 ml-0.5">—</strong> ms
           </span>
           <span class="flex items-center gap-1">
-            <span class="inline-block w-2 h-2 rounded-full bg-amber-400"></span>
-            p95: <strong id="latency-p95" class="text-amber-300 ml-0.5">—</strong> ms
+            <span class="inline-block w-2 h-2 rounded-full bg-purple-400"></span>
+            p95: <strong id="latency-p95" class="text-purple-600 ml-0.5">—</strong> ms
           </span>
           <span class="flex items-center gap-1">
-            <span class="inline-block w-2 h-2 rounded-full bg-rose-400"></span>
-            p99: <strong id="latency-p99" class="text-rose-300 ml-0.5">—</strong> ms
+            <span class="inline-block w-2 h-2 rounded-full bg-pink-400"></span>
+            p99: <strong id="latency-p99" class="text-pink-600 ml-0.5">—</strong> ms
           </span>
         </div>
       </header>
@@ -185,7 +185,7 @@
   </main>
 
   <!-- ===== FOOTER ===== -->
-  <footer class="mt-8 pb-6 text-center text-xs text-gray-700">
+  <footer class="mt-8 pb-6 text-center text-xs text-slate-500">
     Realtime Analytics Dashboard — Fast Lazy Bee · AWS SQS · Lambda · DynamoDB · WebSocket Gateway
   </footer>
 

@@ -1,47 +1,31 @@
-/**
- * app.js — WebSocket client for the Realtime Analytics Dashboard
- *
- * Responsibilities:
- *  - Connect to the WebSocket Gateway on page load
- *  - Dispatch incoming messages to dashboard.js and latencyChart.js
- *  - Manage connection status badge in the header
- *  - Implement exponential backoff reconnection (up to 10 attempts)
- */
+// app.js — WebSocket client for the Realtime Analytics Dashboard
 
 (function () {
   'use strict';
 
-  // ─── Configuration ────────────────────────────────────────────────────────
+  // config
 
-  /** WebSocket URL — set by the <script> config block in index.html */
+  // websocket url
   const WS_URL = window.GATEWAY_WS_URL || 'ws://localhost:8080/ws';
 
   const RECONNECT_INITIAL_DELAY = 1000; // ms
   const RECONNECT_MULTIPLIER    = 2;
   const RECONNECT_CAP           = 30000; // ms
   const RECONNECT_MAX_ATTEMPTS  = 10;
-
-  // ─── State ────────────────────────────────────────────────────────────────
+ 
+  // state
 
   let socket          = null;
   let attemptCount    = 0;
   let reconnectTimer  = null;
 
-  // ─── DOM helpers ──────────────────────────────────────────────────────────
-
-  /**
-   * Update the connection status badge in the page header.
-   *
-   * @param {'connecting'|'connected'|'reconnecting'|'lost'} state
-   * @param {number} [attempt] - current attempt number (used for 'reconnecting')
-   */
+  // update connection status badge
   function setConnectionStatus(state, attempt) {
     const dot    = document.getElementById('connection-dot');
     const label  = document.getElementById('connection-status');
 
     if (!dot || !label) return;
-
-    // Remove all possible colour classes before applying the new one
+    
     dot.classList.remove('bg-gray-500', 'bg-green-400', 'bg-amber-400', 'bg-red-500');
 
     switch (state) {
@@ -67,14 +51,7 @@
     }
   }
 
-  // ─── Message handlers ─────────────────────────────────────────────────────
-
-  /**
-   * Compute the sum of all viewCount values in the top10 array.
-   *
-   * @param {Array<{viewCount: number}>} top10
-   * @returns {number}
-   */
+  // message handler
   function sumViewCounts(top10) {
     if (!Array.isArray(top10)) return 0;
     return top10.reduce(function (acc, item) {
@@ -82,18 +59,12 @@
     }, 0);
   }
 
-  /**
-   * Update the shared stat tiles (#last-update, #total-views) that are
-   * common to both initial_state and stats_update messages.
-   *
-   * @param {object} msg - parsed WebSocket message
-   */
+  // update stat titles
   function updateStatTiles(msg) {
     const lastUpdateEl = document.getElementById('last-update');
     const totalViewsEl = document.getElementById('total-views');
 
     if (lastUpdateEl) {
-      // Prefer deliveredAt; fall back to publishedAt if absent (initial_state has no publishedAt)
       const ts = msg.deliveredAt || msg.publishedAt;
       if (ts) {
         lastUpdateEl.textContent = new Date(ts).toLocaleTimeString();
@@ -105,12 +76,7 @@
     }
   }
 
-  /**
-   * Handle an `initial_state` message from the Gateway.
-   * Performs a full dashboard refresh; no latency sample (no publishedAt).
-   *
-   * @param {object} msg
-   */
+  // handling initial state message from gateway
   function handleInitialState(msg) {
     if (typeof window.dashboard?.renderTop10 === 'function') {
       window.dashboard.renderTop10(msg.top10);
@@ -123,12 +89,7 @@
     updateStatTiles(msg);
   }
 
-  /**
-   * Handle a `stats_update` message from the Gateway.
-   * Updates the dashboard and records a latency sample for the chart.
-   *
-   * @param {object} msg
-   */
+  // handling stats update from gateway
   function handleStatsUpdate(msg) {
     if (typeof window.dashboard?.renderTop10 === 'function') {
       window.dashboard.renderTop10(msg.top10);
@@ -142,7 +103,7 @@
       window.dashboard.renderActivityFeed(msg);
     }
 
-    // Record latency sample only when both timestamps are present
+    // record latency sample only when both timestamps are present
     if (msg.publishedAt && msg.deliveredAt) {
       if (typeof window.latencyChart?.addSample === 'function') {
         window.latencyChart.addSample(msg.publishedAt, msg.deliveredAt);
@@ -157,12 +118,7 @@
     updateStatTiles(msg);
   }
 
-  /**
-   * Route a raw WebSocket message to the appropriate handler.
-   * Malformed JSON is logged and silently ignored.
-   *
-   * @param {MessageEvent} event
-   */
+  // jsonify message
   function onMessage(event) {
     let msg;
     try {
@@ -186,16 +142,7 @@
     }
   }
 
-  // ─── Reconnection logic ───────────────────────────────────────────────────
-
-  /**
-   * Calculate the next reconnect delay using exponential backoff.
-   *
-   * delay = min(initialDelay * multiplier^attempt, cap)
-   *
-   * @param {number} attempt - zero-based attempt index
-   * @returns {number} delay in milliseconds
-   */
+  // reconnection logic
   function calcDelay(attempt) {
     return Math.min(
       RECONNECT_INITIAL_DELAY * Math.pow(RECONNECT_MULTIPLIER, attempt),
@@ -203,12 +150,7 @@
     );
   }
 
-  /**
-   * Schedule a reconnection attempt after the appropriate backoff delay.
-   * Stops scheduling once RECONNECT_MAX_ATTEMPTS is reached.
-   */
   function scheduleReconnect() {
-    // Clear any pending timer to avoid double-scheduling
     if (reconnectTimer !== null) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -229,16 +171,10 @@
     reconnectTimer = setTimeout(connect, delay);
   }
 
-  // ─── WebSocket lifecycle ──────────────────────────────────────────────────
-
-  /**
-   * Open a new WebSocket connection to the Gateway.
-   * Called on page load and on each reconnect attempt.
-   */
+  // websocket connection handling
   function connect() {
     reconnectTimer = null;
 
-    // Close any stale socket before opening a new one
     if (socket !== null) {
       socket.onopen  = null;
       socket.onclose = null;
@@ -255,7 +191,7 @@
 
     socket.onopen = function () {
       console.info('[app.js] Connected');
-      attemptCount = 0; // reset backoff counter on successful connection
+      attemptCount = 0; // reset counter on successful connection
       setConnectionStatus('connected');
     };
 
@@ -267,15 +203,12 @@
     };
 
     socket.onerror = function (err) {
-      // onerror is always followed by onclose; log here, reconnect in onclose
+      // onerror is always followed by onclose
       console.error('[app.js] WebSocket error:', err);
     };
   }
 
-  // ─── Entry point ──────────────────────────────────────────────────────────
-
-  // Connect as soon as the DOM is ready (scripts are deferred to end of <body>
-  // so the DOM is already parsed when this runs, but we guard anyway).
+  // entry point
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', connect);
   } else {
