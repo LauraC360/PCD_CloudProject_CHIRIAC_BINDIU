@@ -94,3 +94,6 @@ Desktop.ini
 .eslintcache
 .stylelintcache
 .parcel-cache/
+
+# Load test raw results (regenerated on each run)
+load-tests/results/

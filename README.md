@@ -1,403 +1,477 @@
-# Realtime Analytics Dashboard
+# Dashboard de Analytics în Timp Real
 
-A cloud-native distributed system that captures movie-view events from a REST API, processes them asynchronously via AWS Lambda, persists aggregated statistics in DynamoDB, and delivers live updates to browser clients over WebSocket.
+**Proiect 1 — PCD Aplicații Distribuite în Cloud**
 
-Built for the PCD (Distributed Cloud Applications) university course, demonstrating independently deployed components, native AWS services, asynchronous communication, and real-time delivery.
+Un sistem distribuit de analytics în timp real construit pe baza API-ului REST Fast Lazy Bee (filme). Sistemul captează evenimente de vizualizare a filmelor, le procesează asincron printr-un pipeline cloud-native și afișează statistici live pe un dashboard în browser.
 
 ---
 
-## Architecture
+## Arhitectură
 
 ```mermaid
-graph TD
-    Client["Browser Client\n(HTML + Vanilla JS)"]
-    ServiceA["Service A\n(Fastify / ECS Fargate)"]
-    MongoDB[("MongoDB\n(movies collection)")]
-    SQS1["SQS: view-events\n(Standard Queue)"]
-    DLQ["SQS: view-events-dlq\n(Dead Letter Queue)"]
-    Lambda["Event Processor\n(AWS Lambda)"]
-    DDB_Stats[("DynamoDB\nMovieStats")]
-    DDB_Idempotency[("DynamoDB\nProcessedEvents")]
-    Gateway["WebSocket Gateway\n(ws / ECS Fargate)"]
-    CW["CloudWatch\nLogs + Metrics"]
+flowchart TD
+    Browser["Client Web\n(Browser)"]
 
-    Client -- "GET /movies/:id (HTTP)" --> ServiceA
-    ServiceA -- "reads movie" --> MongoDB
-    ServiceA -- "publishes View_Event\n(fire-and-forget)" --> SQS1
-    SQS1 -- "triggers (batch ≤10)" --> Lambda
-    SQS1 -- "after maxRetries" --> DLQ
-    Lambda -- "conditional PutItem\n(idempotency check)" --> DDB_Idempotency
-    Lambda -- "ADD viewCount\n(atomic increment)" --> DDB_Stats
-    Lambda -- "HTTP POST /internal/notify" --> Gateway
-    Lambda -- "logs + metrics" --> CW
-    Gateway -- "Query top-10 GSI" --> DDB_Stats
-    Gateway -- "WebSocket push\nstats_update" --> Client
-    Gateway -- "GET /health" --> Client
-    ServiceA -- "GET /metrics" --> Client
+    subgraph AWS
+        SA["Service A\nFast Lazy Bee\nApp Runner"]
+        MongoDB[("MongoDB Atlas\nsample_mflix")]
+        SQS["SQS\nview-events"]
+        DLQ["SQS\nview-events-dlq"]
+        Lambda["Event Processor\nAWS Lambda"]
+        DDB_Stats[("DynamoDB\nMovieStats")]
+        DDB_Idempotency[("DynamoDB\nProcessedEvents")]
+        DDB_Activity[("DynamoDB\nRecentActivity")]
+        WSG["WebSocket Gateway\nECS Fargate"]
+        Cognito["Cognito\nUser Pool"]
+        CW["CloudWatch\nLogs + Metrics"]
+        CF_Front["CloudFront + S3\nFrontend"]
+    end
+
+    Browser -- "HTTPS REST\n(JWT auth)" --> SA
+    SA -- "citește filme" --> MongoDB
+    SA -- "publish View_Event\n(fire-and-forget)" --> SQS
+    SQS -- "trigger batch ≤ 10" --> Lambda
+    SQS -- "după maxRetries" --> DLQ
+    Lambda -- "idempotency check" --> DDB_Idempotency
+    Lambda -- "ADD viewCount\n(increment atomic)" --> DDB_Stats
+    Lambda -- "PutItem" --> DDB_Activity
+    Lambda -- "HTTP POST\n/internal/notify" --> WSG
+    Lambda -- "logs + metrici" --> CW
+    WSG -- "Query top-10 GSI" --> DDB_Stats
+    WSG -- "Query activitate" --> DDB_Activity
+    WSG -- "WebSocket push\nstats_update" --> Browser
+    Browser -- "WebSocket /ws" --> WSG
+    Browser -- "static files" --> CF_Front
+    SA -- "validare JWT" --> Cognito
 ```
 
-**Main data flow:**
-`GET /movies/:id` → Service A publishes View_Event to SQS → Lambda processes event and updates DynamoDB → WebSocket Gateway pushes update to all connected clients → Frontend displays updated statistics.
+### Componente
+
+| Componentă | Runtime | Hosting |
+|---|---|---|
+| Service A (Fast Lazy Bee) | TypeScript / Fastify v5 | AWS App Runner |
+| Event Processor | Node.js | AWS Lambda |
+| WebSocket Gateway | Node.js / ws | AWS ECS Fargate |
+| Dashboard Frontend | HTML + Vanilla JS | S3 + CloudFront |
+
+**Fluxul principal de date:**
+`GET /movies/:id` → Service A publică View_Event în SQS → Lambda procesează evenimentul și actualizează DynamoDB → WebSocket Gateway trimite update-ul către toți clienții conectați → Frontend-ul afișează statisticile actualizate.
+
+### Servicii
+
+#### Service A — Fast Lazy Bee (TypeScript / Fastify)
+
+Servește API-ul REST de filme, backed de MongoDB. La fiecare `GET /movies/:id` publică un `View_Event` în SQS asincron (fire-and-forget) — publicarea în SQS nu întârzie niciodată răspunsul HTTP.
+
+| Endpoint | Descriere |
+|---|---|
+| `GET /movies/:id` | Returnează filmul JSON; publică View_Event în SQS |
+| `GET /metrics` | Returnează `{ totalPublished, publishErrors, avgPublishLatencyMs }` |
+| `GET /health` | Health check |
+
+#### Event Processor (Node.js — AWS Lambda)
+
+Triggerat de SQS în batch-uri de până la 10 mesaje. Pentru fiecare eveniment: verificare de idempotență (`PutItem` condiționat pe `ProcessedEvents`), increment atomic al `viewCount` în `MovieStats` (expresie `ADD`), notificare WebSocket Gateway via HTTP POST, publicare metrici CloudWatch. Mesajele eșuate sunt returnate via `ReportBatchItemFailures`.
+
+#### WebSocket Gateway (Node.js / ws)
+
+Menține conexiuni WebSocket cu clienții browser. Primește notificări de la Lambda pe `POST /internal/notify`, interoghează DynamoDB GSI pentru top-10, și broadcast-ează `stats_update` către toți clienții. Aplică backpressure când rata depășește 100 events/s.
+
+| Endpoint | Descriere |
+|---|---|
+| `WS /ws` | Conexiune WebSocket pentru clienți browser |
+| `GET /health` | Returnează `{ status, connectedClients, backpressureActive }` |
+| `POST /internal/notify` | Endpoint intern apelat de Lambda |
+
+#### Frontend (HTML + Vanilla JS)
+
+SPA static servit din S3 + CloudFront. Se conectează la Gateway prin WebSocket, afișează: tabelul top-10 filme, contor utilizatori conectați, flux de activitate recentă, grafic de latență p50/p95/p99. Implementează reconectare cu exponential backoff (1s × 2, cap 30s, max 10 încercări).
 
 ---
 
-## Services
+## Cerințe preliminare
 
-### Service A — Fast Lazy Bee (Node.js / Fastify)
-
-Hosted on **AWS ECS Fargate** (always-running task).
-
-Serves the movie REST API backed by MongoDB. On every `GET /movies/:id` request it publishes a `View_Event` to SQS asynchronously (fire-and-forget) — SQS publishing never delays the HTTP response. Exposes a `/metrics` endpoint for observability.
-
-| Endpoint | Description |
-|---|---|
-| `GET /movies/:id` | Returns movie JSON; publishes View_Event to SQS |
-| `GET /metrics` | Returns `{ totalPublished, publishErrors, avgPublishLatencyMs }` |
-
-### Event Processor (Node.js — AWS Lambda)
-
-Hosted on **AWS Lambda** (30-second timeout, ≥ 256 MB memory).
-
-Triggered by the SQS event source mapping in batches of up to 10 messages. For each event it performs an idempotency check (conditional `PutItem` on `ProcessedEvents`), atomically increments the `viewCount` in `MovieStats` (`ADD` expression), notifies the WebSocket Gateway via HTTP POST, and publishes CloudWatch Metrics. Failed items are returned via `ReportBatchItemFailures` so only failed messages are retried.
-
-### WebSocket Gateway (Node.js / ws)
-
-Hosted on **AWS ECS Fargate** (always-running task).
-
-Maintains WebSocket connections with browser clients. Receives notifications from Lambda on `POST /internal/notify`, queries the DynamoDB `MovieStats` GSI for the current top-10, stamps `deliveredAt`, and broadcasts a `stats_update` message to all connected clients. Applies backpressure when the incoming event rate exceeds 100/s (coalesces to at most 1 push/s per client).
-
-| Endpoint | Description |
-|---|---|
-| `WS /ws` | WebSocket connection endpoint for browser clients |
-| `GET /health` | Returns `{ status, connectedClients, backpressureActive }` |
-| `POST /internal/notify` | Internal endpoint called by Lambda (not public) |
-
-### Frontend (HTML + Vanilla JS)
-
-**Static SPA** served by the WebSocket Gateway's HTTP server (or from S3 + CloudFront).
-
-Connects to the Gateway over WebSocket, renders the live top-10 movies table, connected-user counter, recent activity feed, and a p50/p95/p99 latency chart. Implements exponential backoff reconnection (initial 1 s, multiplier 2, cap 30 s, max 10 attempts).
+- AWS CLI v2 instalat ([instrucțiuni](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html))
+- Node.js ≥ 18
+- Docker (cu Colima sau Docker Desktop) — pentru construirea imaginilor de container
+- AWS CDK v2 (`npm install -g aws-cdk`)
 
 ---
 
-## Environment Variables
+## Configurare AWS CLI
 
-No hardcoded values exist in source code. All external dependencies are configured via environment variables.
+### 1. Crearea unui utilizator IAM
+
+În AWS Console → IAM → Users:
+
+1. Click **Create user**
+2. Nume: `pcd-dev` (sau orice alt nume)
+3. Atașați politica **AdministratorAccess** (pentru simplitate în cadrul proiectului)
+4. La pasul final, selectați **Create access key** → **Command Line Interface (CLI)**
+5. Salvați **Access Key ID** și **Secret Access Key**
+
+### 2. Configurarea profilului AWS CLI
+
+```bash
+aws configure --profile <AWS_PROFILE>
+```
+
+Vi se vor cere:
+```
+AWS Access Key ID:     <ACCESS_KEY_ID>
+AWS Secret Access Key: <SECRET_ACCESS_KEY>
+Default region name:   us-east-1
+Default output format: json
+```
+
+Aceasta creează/actualizează două fișiere:
+
+- `~/.aws/credentials` — stochează cheile de acces
+- `~/.aws/config` — stochează regiunea și formatul de output
+
+### 3. Verificarea configurării
+
+```bash
+aws sts get-caller-identity --profile <AWS_PROFILE>
+```
+
+Ar trebui să returneze:
+```json
+{
+    "UserId": "<USER_ID>",
+    "Account": "<ACCOUNT_ID>",
+    "Arn": "arn:aws:iam::<ACCOUNT_ID>:user/pcd-dev"
+}
+```
+
+### 4. Reîmprospătarea credențialelor
+
+**Chei de acces IAM (access keys):** Nu expiră automat. Dacă le rotați sau le dezactivați din consolă, trebuie să rulați din nou `aws configure --profile <AWS_PROFILE>` cu noile chei.
+
+**Dacă folosiți AWS SSO / Identity Center** (în loc de access keys):
+
+```bash
+# Configurare inițială (o singură dată)
+aws configure sso --profile <AWS_PROFILE>
+
+# Login — trebuie rulat periodic când sesiunea expiră (de obicei la 8-12 ore)
+aws sso login --profile <AWS_PROFILE>
+```
+
+Veți ști că sesiunea a expirat când comenzile AWS returnează:
+```
+Error: The SSO session associated with this profile has expired or is otherwise invalid.
+```
+
+Soluția: `aws sso login --profile <AWS_PROFILE>`
+
+**Dacă folosiți token-uri temporare (STS):** Acestea expiră după 1-12 ore. Trebuie regenerate manual sau prin scriptul organizației voastre.
+
+### 5. Utilizarea profilului
+
+Toate comenzile AWS din acest proiect folosesc flag-ul `--profile <AWS_PROFILE>`. Alternativ, puteți seta variabila de mediu:
+
+```bash
+export AWS_PROFILE=<AWS_PROFILE>
+# acum nu mai trebuie --profile la fiecare comandă
+```
+
+---
+
+## Configurare inițială
+
+### 1. MongoDB Atlas
+
+1. Creați un cluster gratuit M0 pe [cloud.mongodb.com](https://cloud.mongodb.com)
+2. Creați un utilizator de bază de date cu acces read/write
+3. Setați IP allowlist la `0.0.0.0/0` (necesar — App Runner are IP-uri de ieșire dinamice)
+4. Încărcați **Sample Dataset** (include `sample_mflix` cu colecția de filme)
+5. Copiați connection string-ul: `mongodb+srv://<user>:<password>@<cluster>.mongodb.net/sample_mflix`
+6. Stocați în SSM:
+   ```bash
+   bash infrastructure/ssm/create-ssm-params.sh --mongo
+   # introduceți connection string-ul când vi se cere
+   ```
+
+### 2. Secret intern (pentru autentificarea Lambda → Gateway)
+
+```bash
+bash infrastructure/ssm/create-ssm-params.sh
+# generează un secret aleatoriu de 32 caractere și îl stochează la /analytics/INTERNAL_SECRET
+```
+
+### 3. CDK Bootstrap (o singură dată per cont/regiune)
+
+```bash
+cd infra
+./node_modules/.bin/cdk bootstrap --profile <AWS_PROFILE>
+```
+
+---
+
+## Dezvoltare locală
 
 ### Service A
 
-| Variable | Required | Description |
-|---|---|---|
-| `SQS_QUEUE_URL` | Yes | Full URL of the `view-events` SQS queue |
-| `MONGODB_URI` | Yes | MongoDB connection string (e.g. `mongodb://host:27017/movies`) |
-| `AWS_REGION` | Yes | AWS region where SQS is deployed (e.g. `eu-west-1`) |
-
-See `service-a/.env.example` for a template.
-
-### Event Processor (Lambda)
-
-| Variable | Required | Description |
-|---|---|---|
-| `DYNAMODB_TABLE_STATS` | Yes | Name of the `MovieStats` DynamoDB table |
-| `DYNAMODB_TABLE_EVENTS` | Yes | Name of the `ProcessedEvents` DynamoDB table |
-| `GATEWAY_INTERNAL_URL` | Yes | Internal HTTP base URL of the WebSocket Gateway (e.g. `http://gateway:8081`) |
-| `AWS_REGION` | Yes | AWS region where DynamoDB tables are deployed |
-
-See `event-processor/.env.example` for a template.
+```bash
+cd service-a
+npm install
+cp .env.example .env          # editați cu valorile voastre
+npm run dev                   # pornește pe http://localhost:3000
+```
 
 ### WebSocket Gateway
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `DYNAMODB_TABLE_STATS` | Yes | — | Name of the `MovieStats` DynamoDB table |
-| `AWS_REGION` | Yes | — | AWS region where DynamoDB is deployed |
-| `PORT` | No | `8080` | Public WebSocket + HTTP port |
-| `INTERNAL_PORT` | No | `8081` | Internal HTTP port for Lambda notifications |
-
-See `websocket-gateway/.env.example` for a template.
-
----
-
-## Build Instructions
-
-### Prerequisites
-
-- Node.js ≥ 18
-- npm ≥ 9
-- Docker (for container builds)
-- AWS CLI v2 configured with appropriate credentials
-
-### Install dependencies
-
-From the repo root (if using npm workspaces):
-
 ```bash
-npm install
+cd websocket-gateway
+cp .env.example .env
+node src/index.js             # WS pe :8080, HTTP intern pe :8081
 ```
 
-Or install per service individually:
-
-```bash
-cd service-a && npm install
-cd ../event-processor && npm install
-cd ../websocket-gateway && npm install
-```
-
-### Build Docker images
-
-```bash
-# Service A
-docker build -t service-a:latest ./service-a
-
-# WebSocket Gateway
-docker build -t websocket-gateway:latest ./websocket-gateway
-```
-
-### Package Lambda function
+### Event Processor (testare locală)
 
 ```bash
 cd event-processor
-npm install --omit=dev
-zip -r function.zip src/ node_modules/ package.json
-```
-
-Or use the provided deploy script:
-
-```bash
-bash event-processor/deploy.sh
-```
-
-### Usage Instructions
-Using the service-a (Fast Lazy Bee API):
-
-##### How to build and run server
-
-```bash
 npm install
+npm test                      # rulează testele unitare
 ```
 
-```bash
-npm run dev
-```
+Lambda-ul nu se rulează local ca server — se testează prin teste unitare sau prin deploy pe AWS.
 
-##### Testing example: 
-# 1. Hit real movie → 200 + movie data
-Invoke-RestMethod http://localhost:3000/api/v1/movies/573a1390f29313caabcd42e8
+### Variabile de mediu
 
-# 2. Check metrics → publishErrors: 1, totalPublished: 0
-Invoke-RestMethod http://localhost:3000/api/v1/metrics
+Nicio valoare nu este hardcodată în cod. Toate dependențele externe sunt configurate prin variabile de mediu.
 
-# 3. Hit fake ID → 404
-Invoke-RestMethod http://localhost:3000/api/v1/movies/000000000000000000000000
+**Service A:**
 
-# 4. Check metrics again → publishErrors still 1 (404 didn't trigger publish)
-Invoke-RestMethod http://localhost:3000/api/v1/metrics
+| Variabilă | Obligatorie | Descriere |
+|---|---|---|
+| `MONGO_URL` | Da | Connection string MongoDB |
+| `MONGO_DB_NAME` | Da | Numele bazei de date (ex: `sample_mflix`) |
+| `SQS_QUEUE_URL` | Da | URL-ul complet al cozii SQS `view-events` |
+| `AWS_REGION` | Da | Regiunea AWS (ex: `us-east-1`) |
+| `COGNITO_JWKS_URL` | Da | Endpoint JWKS pentru validarea JWT |
+| `APP_PORT` | Nu | Port server (default: `3000`) |
 
+**Event Processor (Lambda):**
+
+| Variabilă | Obligatorie | Descriere |
+|---|---|---|
+| `DYNAMODB_TABLE_STATS` | Da | Numele tabelei `MovieStats` |
+| `DYNAMODB_TABLE_EVENTS` | Da | Numele tabelei `ProcessedEvents` |
+| `DYNAMODB_TABLE_RECENT_ACTIVITY` | Da | Numele tabelei `RecentActivity` |
+| `GATEWAY_INTERNAL_URL` | Da | URL-ul HTTP intern al WebSocket Gateway |
+| `AWS_REGION` | Da | Regiunea AWS |
+
+**WebSocket Gateway:**
+
+| Variabilă | Obligatorie | Descriere |
+|---|---|---|
+| `DYNAMODB_TABLE_STATS` | Da | Numele tabelei `MovieStats` |
+| `AWS_REGION` | Da | Regiunea AWS |
+| `PORT` | Nu | Port WebSocket public (default: `8080`) |
+| `INTERNAL_PORT` | Nu | Port HTTP intern pentru notificări Lambda (default: `8081`) |
+
+Fiecare serviciu are un fișier `.env.example` cu toate variabilele. Copiați-l ca `.env` și completați valorile.
+
+> **Notă:** În producție, variabilele sunt injectate automat prin CDK (App Runner env vars, Lambda env vars, ECS task definition). Nu se hardcodează niciodată secrete în cod.
 
 ---
 
-## Deploy Instructions
+## Deploy
 
-### 1. AWS Infrastructure
-
-Provision the required AWS resources before deploying services:
-
-- SQS queue `view-events` (`VisibilityTimeout=60s`, `maxReceiveCount=3`) and DLQ `view-events-dlq`
-- DynamoDB table `MovieStats` (PK: `movieId`, billing: `PAY_PER_REQUEST`, GSI `viewCount-index` on `pk`/`viewCount`)
-- DynamoDB table `ProcessedEvents` (PK: `requestId`, billing: `PAY_PER_REQUEST`, TTL on `ttl`)
-- IAM role for Lambda with SQS, DynamoDB, CloudWatch permissions
-- IAM role for ECS tasks with SQS send and DynamoDB query permissions
-
-See `infrastructure/resources.md` for ARNs and names after provisioning.
-
-### 2. Service A — ECS Fargate
+### Pasul 1: Construiți și publicați imaginile Docker
 
 ```bash
-# Push image to ECR
-aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
-docker tag service-a:latest $ECR_REGISTRY/service-a:latest
-docker push $ECR_REGISTRY/service-a:latest
+# Autentificare la ECR
+aws ecr get-login-password --profile <AWS_PROFILE> --region us-east-1 \
+  | docker login --username AWS --password-stdin \
+    <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
 
-# Create/update ECS task definition and service via AWS Console or CLI
-# Inject environment variables: SQS_QUEUE_URL, MONGODB_URI, AWS_REGION
-```
-
-The ECS service should run at least one always-on task in a public subnet with the security group allowing inbound traffic on port 3000.
-
-### 3. WebSocket Gateway — ECS Fargate
-
-```bash
-# Push image to ECR
-docker tag websocket-gateway:latest $ECR_REGISTRY/websocket-gateway:latest
-docker push $ECR_REGISTRY/websocket-gateway:latest
-
-# Create/update ECS task definition and service via AWS Console or CLI
-# Inject environment variables: DYNAMODB_TABLE_STATS, AWS_REGION, PORT, INTERNAL_PORT
-```
-
-The ECS service should run at least one always-on task with the security group allowing inbound traffic on ports 8080 (public) and 8081 (internal).
-
-### 4. Event Processor — Lambda
-
-```bash
-# Deploy using the provided script
-bash event-processor/deploy.sh
-
-# Or manually
-aws lambda update-function-code \
-  --function-name event-processor \
-  --zip-file fileb://event-processor/function.zip
-
-# Configure SQS event source mapping (batch size 10, ReportBatchItemFailures)
-aws lambda create-event-source-mapping \
-  --function-name event-processor \
-  --event-source-arn $SQS_QUEUE_ARN \
-  --batch-size 10 \
-  --function-response-types ReportBatchItemFailures
-
-# Set environment variables
-aws lambda update-function-configuration \
-  --function-name event-processor \
-  --environment "Variables={DYNAMODB_TABLE_STATS=MovieStats,DYNAMODB_TABLE_EVENTS=ProcessedEvents,GATEWAY_INTERNAL_URL=http://<gateway-internal-host>:8081,AWS_REGION=$AWS_REGION}"
-```
-
-Lambda should be configured with a 30-second timeout and at least 256 MB of memory.
-
-### 5. Frontend — Static Files
-
-The frontend is served as static files by the WebSocket Gateway's HTTP server. Alternatively, upload to S3 and serve via CloudFront:
-
-```bash
-aws s3 sync ./frontend s3://$FRONTEND_BUCKET/ --delete
-```
-
----
-
-## Test Instructions
-
-### Unit Tests
-
-Run unit tests for each service:
-
-```bash
 # Service A
-cd service-a && npm test
-
-# Event Processor
-cd event-processor && npm test
+cd service-a
+docker build --platform linux/amd64 -t service-a:latest .
+docker tag service-a:latest <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/service-a:latest
+docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/service-a:latest
 
 # WebSocket Gateway
-cd websocket-gateway && npm test
-
-# Frontend
-cd frontend && npm test
+cd ../websocket-gateway
+docker build --platform linux/amd64 -t websocket-gateway:latest .
+docker tag websocket-gateway:latest <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/websocket-gateway:latest
+docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/websocket-gateway:latest
 ```
 
-Or run all tests from the root (if workspaces are configured):
+> **Important:** Construiți întotdeauna cu `--platform linux/amd64`. Atât App Runner cât și ECS Fargate rulează pe amd64. Construirea pe un Mac cu procesor M fără acest flag produce imagini arm64 care nu vor porni.
+
+### Pasul 2: Deploy-ul stack-ului CDK
 
 ```bash
-npm test
+cd infra
+./node_modules/.bin/cdk deploy --profile <AWS_PROFILE> --no-rollback
 ```
 
-### Property-Based Tests
+Aceasta provizionează: VPC, cozi SQS, tabele DynamoDB, Lambda, ECS Fargate + ALB + CloudFront (WSG), App Runner (Service A), S3 + CloudFront (frontend), Cognito User Pool, alertă de buget, VPC endpoints pentru DynamoDB/SSM/CloudWatch.
 
-Property-based tests use [fast-check](https://github.com/dubzzz/fast-check) and are co-located with unit tests. They run as part of the standard `npm test` command. Each property runs a minimum of 100 iterations.
+### Pasul 3: Forțați actualizarea serviciilor (după push-ul imaginilor)
 
-| Property | Component | What it verifies |
+```bash
+# App Runner — declanșați redeploy
+aws apprunner start-deployment \
+  --service-arn <APP_RUNNER_SERVICE_ARN> \
+  --profile <AWS_PROFILE> --region us-east-1
+
+# ECS — forțați un task nou
+aws ecs update-service \
+  --cluster analytics-cluster \
+  --service <ECS_SERVICE_NAME> \
+  --force-new-deployment \
+  --profile <AWS_PROFILE> --region us-east-1
+```
+
+### Pasul 4: Deploy-ul frontend-ului
+
+```bash
+aws s3 sync ./frontend s3://<FRONTEND_S3_BUCKET>/ \
+  --delete --profile <AWS_PROFILE> --region us-east-1
+
+aws cloudfront create-invalidation \
+  --distribution-id <FRONTEND_CF_DISTRIBUTION_ID> \
+  --paths "/*" --profile <AWS_PROFILE>
+```
+
+---
+
+## Autentificare (Cognito)
+
+Sistemul folosește **AWS Cognito User Pool** pentru autentificare.
+
+### Crearea unui utilizator
+
+```bash
+aws cognito-idp admin-create-user \
+  --user-pool-id <COGNITO_USER_POOL_ID> \
+  --username user@example.com \
+  --message-action SUPPRESS \
+  --profile <AWS_PROFILE> --region us-east-1
+
+aws cognito-idp admin-set-user-password \
+  --user-pool-id <COGNITO_USER_POOL_ID> \
+  --username user@example.com \
+  --password 'ParolaVoastra123' \
+  --permanent \
+  --profile <AWS_PROFILE> --region us-east-1
+```
+
+### Obținerea unui token JWT
+
+```bash
+aws cognito-idp initiate-auth \
+  --auth-flow USER_PASSWORD_AUTH \
+  --auth-parameters USERNAME=user@example.com,PASSWORD='ParolaVoastra123' \
+  --client-id <COGNITO_APP_CLIENT_ID> \
+  --profile <AWS_PROFILE> --region us-east-1 \
+  --query "AuthenticationResult.IdToken" \
+  --output text
+```
+
+### Utilizarea token-ului JWT
+
+```bash
+curl -H "Authorization: Bearer <IdToken>" \
+  https://<SERVICE_A_URL>/api/v1/movies?page=1&pageSize=5
+```
+
+---
+
+## Accesarea Dashboard-ului
+
+1. Deschideți un browser și navigați la `<FRONTEND_CLOUDFRONT_URL>`
+2. Dashboard-ul se conectează automat la WebSocket Gateway la `wss://<WSG_CLOUDFRONT_URL>/ws`
+3. La conectare, dashboard-ul afișează: top-10 filme după vizualizări, contorul de utilizatori conectați, fluxul de activitate recentă
+4. Declanșați evenimente de vizualizare apelând `GET /movies/:id` pe Service A — dashboard-ul se actualizează în timp real
+5. Graficul de latență (partea de jos) arată p50/p95/p99 end-to-end pe o fereastră glisantă de 60 secunde
+
+Dacă conexiunea WebSocket cade, dashboard-ul se reconectează automat cu exponential backoff și afișează un indicator „Reconnecting...". După 10 încercări eșuate afișează „Connection lost. Please refresh the page."
+
+---
+
+## Teste
+
+### Teste unitare
+
+```bash
+cd service-a && npm test        # Service A
+cd event-processor && npm test  # Event Processor
+```
+
+### Teste property-based
+
+Testele property-based folosesc [fast-check](https://github.com/dubzzz/fast-check) și rulează ca parte din `npm test`. Fiecare proprietate rulează minim 100 de iterații.
+
+| Proprietate | Componentă | Ce verifică |
 |---|---|---|
-| P1: Counter Invariant | Event Processor | N distinct events for same `movieId` → `viewCount` = N |
-| P2: Idempotency | Event Processor | Event duplicated K times → `viewCount` = 1 |
-| P3: Movie Isolation | Event Processor | Events for two `movieId`s don't affect each other's counts |
-| P4: Serialization Round-Trip | Service A + Event Processor | `serialize(event)` → SQS → `deserialize(message)` yields identical fields |
-| P5: Monotonically Non-Decreasing | WebSocket Gateway | `viewCount` values pushed to clients never go backwards |
-| P6: Invalid Input Rejection | Event Processor | Malformed/missing-field messages never write to DynamoDB |
-| P7: Backpressure Coalescing | WebSocket Gateway | N > 100 notifications in 1 s → each client receives exactly 1 push |
+| P1: Counter Invariant | Event Processor | N evenimente distincte pentru același `movieId` → `viewCount` = N |
+| P2: Idempotency | Event Processor | Eveniment duplicat de K ori → `viewCount` = 1 |
+| P3: Movie Isolation | Event Processor | Evenimentele pentru două `movieId`-uri nu se afectează reciproc |
+| P4: Serialization Round-Trip | Service A | `serialize(event)` → SQS → `deserialize(message)` produce câmpuri identice |
 
-### Integration Tests
-
-Integration tests require a running AWS environment (or LocalStack). Set the required environment variables before running:
+### Teste de încărcare (load tests)
 
 ```bash
-# End-to-end smoke test
-node tests/integration/e2e.js
-
-# DLQ routing test (publishes a malformed message and waits for DLQ delivery)
-node tests/integration/dlq-test.js
+cd load-tests
+npm install
+npm run all        # rulează toate cele 6 teste + generează RESULTS.md
 ```
 
-The e2e test connects a WebSocket client to the Gateway, calls `GET /movies/:id` on Service A, and asserts a `stats_update` message is received within 500 ms with `viewCount` ≥ 1.
-
-### Load Tests
-
-Load tests use [Artillery](https://www.artillery.io/). Install it globally first:
-
-```bash
-npm install -g artillery
-```
-
-Run the load test against the deployed environment:
-
-```bash
-artillery run tests/load/load-test.yml --output tests/load/report.json
-artillery report tests/load/report.json
-```
-
-The load test simulates 200 virtual users for 60 seconds hitting `GET /movies/:id`. Assertions:
-- p99 HTTP response latency < 200 ms
-- Error rate < 0.1%
-- WebSocket push latency p95 < 500 ms
-
-To verify backpressure, run the load test at > 100 req/s and check:
-
-```bash
-curl http://<gateway-host>:8080/health
-# Expected: { "status": "ok", "connectedClients": N, "backpressureActive": true }
-```
+Consultați `load-tests/README.md` pentru comenzi individuale per test.
 
 ---
 
-## Accessing the Dashboard
+## Resurse AWS principale
 
-1. Open a browser and navigate to `http://<gateway-host>:8080` (or the CloudFront/S3 URL if using static hosting).
-2. The dashboard connects automatically to the WebSocket Gateway at `ws://<gateway-host>:8080/ws`.
-3. On connection, the dashboard displays the current top-10 movies by view count, the connected-user count, and the recent activity feed.
-4. Trigger view events by calling `GET /movies/:id` on Service A — the dashboard updates in real time.
-5. The latency chart (bottom of the page) shows p50/p95/p99 end-to-end latency over a 60-second sliding window.
-
-If the WebSocket connection drops, the dashboard automatically reconnects with exponential backoff and displays a "Reconnecting..." indicator. After 10 failed attempts it displays "Connection lost. Please refresh the page."
+| Resursă | Placeholder |
+|---|---|
+| App Runner URL | `<SERVICE_A_URL>` |
+| WSG CloudFront | `<WSG_CLOUDFRONT_URL>` |
+| WSG ALB | `<WSG_ALB_URL>` |
+| Frontend CloudFront | `<FRONTEND_CLOUDFRONT_URL>` |
+| Frontend S3 Bucket | `<FRONTEND_S3_BUCKET>` |
+| CloudFront Distribution ID | `<FRONTEND_CF_DISTRIBUTION_ID>` |
+| Cognito User Pool | `<COGNITO_USER_POOL_ID>` |
+| Cognito App Client | `<COGNITO_APP_CLIENT_ID>` |
+| ECR: service-a | `<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/service-a` |
+| ECR: websocket-gateway | `<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/websocket-gateway` |
+| DynamoDB: MovieStats | `MovieStats` |
+| DynamoDB: RecentActivity | `RecentActivity` |
+| DynamoDB: ProcessedEvents | `ProcessedEvents` |
+| SQS: view-events | `https://sqs.us-east-1.amazonaws.com/<ACCOUNT_ID>/view-events` |
+| SQS: view-events-dlq | `https://sqs.us-east-1.amazonaws.com/<ACCOUNT_ID>/view-events-dlq` |
+| Lambda | `event-processor` |
+| ECS Cluster | `analytics-cluster` |
 
 ---
 
-## Project Structure
+## Ștergerea resurselor (teardown)
+
+```bash
+cd infra
+./node_modules/.bin/cdk destroy --profile <AWS_PROFILE>
+```
+
+Aceasta șterge toate resursele provizionate. Tabelele DynamoDB și bucket-ul S3 au `removalPolicy: DESTROY`, deci sunt complet curățate.
+
+---
+
+## Structura repository-ului
 
 ```
-.
-├── service-a/              # Fast Lazy Bee — Fastify REST API + SQS publisher
-│   ├── src/
-│   ├── Dockerfile
-│   ├── package.json
-│   └── .env.example
-├── event-processor/        # AWS Lambda — SQS consumer, DynamoDB writer
-│   ├── src/
-│   ├── deploy.sh
-│   ├── package.json
-│   └── .env.example
-├── websocket-gateway/      # WebSocket server — real-time push to clients
-│   ├── src/
-│   ├── Dockerfile
-│   ├── package.json
-│   └── .env.example
-├── frontend/               # Static SPA — HTML + Vanilla JS dashboard
-│   ├── index.html
-│   ├── app.js
-│   ├── dashboard.js
-│   ├── latencyChart.js
-│   └── style.css
-├── tests/
-│   ├── integration/        # End-to-end and DLQ routing tests
-│   └── load/               # Artillery load test configuration
-├── infrastructure/
-│   └── resources.md        # Provisioned AWS resource ARNs and names
-├── package.json            # Root package (workspaces)
-└── README.md
+service-a/          ← API REST Fast Lazy Bee (TypeScript / Fastify / MongoDB)
+event-processor/    ← Funcție Lambda (Node.js)
+websocket-gateway/  ← WebSocket Gateway (Node.js / ws / ECS Fargate)
+frontend/           ← Dashboard (HTML vanilla + JS + Tailwind + Chart.js)
+infra/              ← Stack AWS CDK (TypeScript)
+load-tests/         ← Teste de performanță (Node.js)
+infrastructure/     ← Scripturi de configurare manuală (SQS, SSM)
+given_assignment/   ← Specificația temei
+README.md           ← Acest fișier
 ```
