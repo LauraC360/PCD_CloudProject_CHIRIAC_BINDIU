@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Realtime Analytics Dashboard</title>
+
+  <!-- Tailwind CSS (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Chart.js (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <!-- Gateway WebSocket URL — override this value before app.js loads -->
+  <script>
+    window.GATEWAY_WS_URL = 'wss://d368d1sswys5zs.cloudfront.net/ws';
+  </script>
+</head>
+<body class="bg-white text-slate-700 min-h-screen font-sans antialiased">
+
+  <!-- ===== HEADER ===== -->
+  <header class="bg-gradient-to-r from-blue-100 via-purple-100 to-blue-100 border-b border-purple-200 px-6 py-4 flex items-center justify-between shadow-sm">
+    <div class="flex items-center gap-3">
+      <svg class="w-7 h-7 text-purple-500" fill="none" stroke="currentColor" stroke-width="1.8"
+           viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M3 13.5l4-4 4 4 4-6 4 4" />
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M3 20h18" />
+      </svg>
+      <h1 class="text-xl font-semibold tracking-tight text-purple-700">
+        Realtime Analytics Dashboard
+      </h1>
+    </div>
+
+    <!-- Connection status badge -->
+    <div class="flex items-center gap-2" aria-live="polite" aria-atomic="true">
+      <span id="connection-dot"
+            class="inline-block w-2.5 h-2.5 rounded-full bg-purple-300"
+            aria-hidden="true"></span>
+      <span id="connection-status"
+            class="text-sm font-medium text-purple-600">
+        Connecting…
+      </span>
+    </div>
+  </header>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+    <!-- ── Row 1: Connected Users + quick stats ── -->
+    <section aria-labelledby="overview-heading" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <h2 id="overview-heading" class="sr-only">Overview</h2>
+
+      <!-- Connected users counter -->
+      <article class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl border border-blue-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-blue-600">
+          Connected Users
+        </p>
+        <p id="connected-clients"
+           class="text-4xl font-bold tabular-nums text-purple-600"
+           aria-label="Connected users count">
+          —
+        </p>
+      </article>
+
+      <!-- Total events (populated by app.js) -->
+      <article class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl border border-purple-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-purple-600">
+          Total Views (top 10)
+        </p>
+        <p id="total-views"
+           class="text-4xl font-bold tabular-nums text-blue-600"
+           aria-label="Total views across top 10 movies">
+          —
+        </p>
+      </article>
+
+      <!-- Last update timestamp -->
+      <article class="bg-gradient-to-br from-pink-50 to-pink-100 rounded-xl border border-pink-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-pink-600">
+          Last Update
+        </p>
+        <p id="last-update"
+           class="text-sm font-medium text-pink-700 mt-1"
+           aria-label="Timestamp of last received update">
+          —
+        </p>
+      </article>
+    </section>
+
+    <!-- ── Row 1b: Assignment metrics ── -->
+    <section aria-labelledby="metrics-heading" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <h2 id="metrics-heading" class="sr-only">Performance Metrics</h2>
+
+      <!-- Throughput -->
+      <article class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl border border-blue-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-blue-600">
+          Throughput
+        </p>
+        <p id="throughput-value"
+           class="text-4xl font-bold tabular-nums text-purple-600"
+           aria-label="Events per minute in the last 60 seconds">
+          —
+        </p>
+        <p class="text-xs text-blue-500">events / min (60s window)</p>
+      </article>
+
+      <!-- Consistency window -->
+      <article class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl border border-purple-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-purple-600">
+          Consistency Window
+        </p>
+        <p id="consistency-window"
+           class="text-4xl font-bold tabular-nums text-blue-600"
+           aria-label="Average end-to-end latency in milliseconds">
+          —
+        </p>
+        <p class="text-xs text-purple-500">avg ms (publish → dashboard)</p>
+      </article>
+
+      <!-- WebSocket reconnects -->
+      <article class="bg-gradient-to-br from-pink-50 to-pink-100 rounded-xl border border-pink-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-pink-600">
+          WS Reconnects
+        </p>
+        <p id="ws-reconnects"
+           class="text-4xl font-bold tabular-nums text-pink-700"
+           aria-label="WebSocket reconnection attempts this session">
+          0
+        </p>
+        <p class="text-xs text-pink-500">attempts this session</p>
+      </article>
+    </section>
+
+    <!-- ── Row 2: Top Movies table + Recent Activity feed ── -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Top Movies table (spans 2 of 3 columns on large screens) -->
+      <section aria-labelledby="top-movies-heading"
+               class="lg:col-span-2 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl border border-blue-200 overflow-hidden shadow-sm">
+        <header class="px-5 py-4 border-b border-blue-200 flex items-center justify-between bg-blue-100">
+          <h2 id="top-movies-heading" class="text-base font-semibold text-blue-700">
+            Top Movies by Views
+          </h2>
+          <span class="text-xs text-blue-600">Live · top 10</span>
+        </header>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm" aria-label="Top movies by view count">
+            <thead>
+              <tr class="text-left text-xs font-semibold uppercase tracking-wider
+                         text-blue-700 border-b border-blue-200 bg-blue-50">
+                <th scope="col" class="px-5 py-3 w-8">#</th>
+                <th scope="col" class="px-5 py-3">Movie ID</th>
+                <th scope="col" class="px-5 py-3 text-right">Views</th>
+                <th scope="col" class="px-5 py-3 text-right hidden sm:table-cell">Last Viewed</th>
+              </tr>
+            </thead>
+            <tbody id="top-movies-tbody" class="divide-y divide-blue-200">
+              <!-- Rows injected by dashboard.js -->
+              <tr>
+                <td colspan="4" class="px-5 py-8 text-center text-blue-500 text-sm">
+                  Waiting for data…
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Recent Activity feed -->
+      <section aria-labelledby="activity-heading"
+               class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl border border-purple-200 overflow-hidden flex flex-col shadow-sm">
+        <header class="px-5 py-4 border-b border-purple-200 flex items-center justify-between bg-purple-100">
+          <h2 id="activity-heading" class="text-base font-semibold text-purple-700">
+            Recent Activity
+          </h2>
+          <span class="text-xs text-purple-600">Last 20 events</span>
+        </header>
+
+        <ol id="activity-feed"
+            aria-label="Recent view activity"
+            aria-live="polite"
+            aria-relevant="additions"
+            class="flex-1 overflow-y-auto divide-y divide-purple-200 max-h-80">
+          <!-- Items prepended by dashboard.js -->
+          <li class="px-5 py-4 text-sm text-purple-500">
+            Waiting for activity…
+          </li>
+        </ol>
+      </section>
+    </div>
+
+    <!-- ── Row 3: Latency chart ── -->
+    <section aria-labelledby="latency-heading"
+             class="bg-gradient-to-br from-pink-50 to-pink-100 rounded-xl border border-pink-200 overflow-hidden shadow-sm">
+      <header class="px-5 py-4 border-b border-pink-200 flex items-center justify-between flex-wrap gap-2 bg-pink-100">
+        <h2 id="latency-heading" class="text-base font-semibold text-pink-700">
+          End-to-End Latency
+        </h2>
+        <div class="flex items-center gap-4 text-xs text-pink-600">
+          <span>60-second sliding window</span>
+          <!-- Percentile badges (updated by latencyChart.js) -->
+          <span class="flex items-center gap-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-blue-400"></span>
+            p50: <strong id="latency-p50" class="text-blue-600 ml-0.5">—</strong> ms
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-purple-400"></span>
+            p95: <strong id="latency-p95" class="text-purple-600 ml-0.5">—</strong> ms
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-pink-400"></span>
+            p99: <strong id="latency-p99" class="text-pink-600 ml-0.5">—</strong> ms
+          </span>
+        </div>
+      </header>
+
+      <div class="p-5">
+        <div class="relative h-56">
+          <canvas id="latency-chart"
+                  aria-label="Latency percentile chart (p50, p95, p99) over the last 60 seconds"
+                  role="img"></canvas>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="mt-8 pb-6 text-center text-xs text-slate-500">
+    Realtime Analytics Dashboard — Fast Lazy Bee · AWS SQS · Lambda · DynamoDB · WebSocket Gateway
+  </footer>
+
+  <!-- Application scripts (loaded after DOM is ready) -->
+  <script src="latencyChart.js"></script>
+  <script src="dashboard.js"></script>
+  <script src="app.js"></script>
+
+</body>
+</html>
