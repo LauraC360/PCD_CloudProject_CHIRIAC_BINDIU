@@ -196,7 +196,7 @@ Tasks are ordered by dependency. Each task maps directly to requirements and des
 - [ ] 7.6 Write unit tests for `dashboard.js`:
   - Verify activity feed keeps max 20 items
   - Verify top-10 table renders correct number of rows sorted by `viewCount` descending
-- [x] 7.7 Upload `frontend/` to the S3 bucket created in Task 1.8 with `aws s3 sync ./frontend s3://<BUCKET_NAME>/ --delete`
+- [~] 7.7 Upload `frontend/` to the S3 bucket created in Task 1.8 with `aws s3 sync ./frontend s3://<BUCKET_NAME>/ --delete`
 
 **Validates:** Requirements 6 (R6.1–R6.7)
 

@@ -354,6 +354,64 @@ curl http://<gateway-host>:8080/health
 # Expected: { "status": "ok", "connectedClients": N, "backpressureActive": true }
 ```
 
+### Local Testing (Without AWS Deployment)
+
+For development and testing without deploying to AWS, run the services locally:
+
+**Terminal 1 - Service A:**
+```bash
+cd service-a
+npm run dev
+```
+
+**Terminal 2 - WebSocket Gateway:**
+```bash
+cd websocket-gateway
+npm run dev
+```
+
+**Terminal 3 - Run Integration Tests:**
+```bash
+node tests/integration/e2e-local.js
+```
+
+This tests the full flow locally:
+- WebSocket client connects to Gateway
+- HTTP client calls Service A `GET /movies/:id`
+- Service A publishes View_Event to SQS (mock)
+- Gateway receives notification and broadcasts `stats_update`
+- WebSocket client receives `stats_update` with updated view count
+
+**Expected output:**
+```
+============================================================
+End-to-End Integration Tests (Local)
+============================================================
+
+[TEST 1] Health Check
+✓ Health check passed
+
+[TEST 2] Service A Metrics
+✓ Service A metrics passed
+
+[TEST 3] WebSocket Connection and Stats Update
+✓ WebSocket stats_update test passed
+
+[TEST 4] Multiple Concurrent Connections
+✓ Multiple connections test passed
+
+============================================================
+Test Summary
+============================================================
+✓ Passed: 4
+✗ Failed: 0
+Total: 4
+
+✓ All tests passed!
+```
+
+For detailed testing instructions, see `TESTING_GUIDE.md` and `tests/README.md`.
+
 ---
 
 ## Accessing the Dashboard

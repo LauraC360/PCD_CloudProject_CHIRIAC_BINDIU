@@ -1,0 +1,71 @@
+# Load Test Configuration for Realtime Analytics Dashboard
+# 
+# Tests the GET /movies/:id endpoint under increasing load
+# Measures latency, throughput, and error rate
+# 
+# Usage:
+#   artillery run tests/load/load-test.yml
+#   artillery run tests/load/load-test.yml --target http://localhost:3000
+
+config:
+  target: "{{ $processEnvironment.TARGET_URL || 'http://localhost:3000' }}"
+  phases:
+    # Ramp-up: 0 → 50 users over 30 seconds
+    - duration: 30
+      arrivalRate: 1.67  # ~50 users over 30s
+      name: "Ramp-up"
+    
+    # Steady state: 50 users for 60 seconds
+    - duration: 60
+      arrivalRate: 1.67
+      name: "Steady state"
+    
+    # Ramp-down: 50 → 0 users over 30 seconds
+    - duration: 30
+      arrivalRate: 1.67
+      rampTo: 0
+      name: "Ramp-down"
+
+  processor: "./load-test-processor.js"
+  variables:
+    movieIds:
+      - "573a1390f29313caabcd42e8"
+      - "573a1390f29313caabcd4270"
+      - "573a1390f29313caabcd4271"
+      - "573a1390f29313caabcd4272"
+      - "573a1390f29313caabcd4273"
+
+scenarios:
+  - name: "Get Movie by ID"
+    flow:
+      - think: 1  # 1 second think time between requests
+      - function: "selectRandomMovie"
+      - get:
+          url: "/api/v1/movies/{{ movieId }}"
+          expect:
+            - statusCode: 200
+            - contentType: json
+          capture:
+            - json: "$.title"
+              as: "movieTitle"
+          timeout: 5000
+
+  - name: "Get Metrics"
+    flow:
+      - think: 5  # 5 second think time
+      - get:
+          url: "/api/v1/metrics"
+          expect:
+            - statusCode: 200
+            - contentType: json
+          capture:
+            - json: "$.totalPublished"
+              as: "totalPublished"
+          timeout: 5000
+
+# Reporting
+reporting:
+  - type: "json"
+    filename: "./tests/load/report.json"
+  - type: "csv"
+    filename: "./tests/load/report.csv"
