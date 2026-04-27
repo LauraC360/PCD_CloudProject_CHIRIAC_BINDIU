@@ -1,0 +1,21 @@
+{
+  "name": "load-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Load tests for PCD Cloud Project — consistency, burst, throughput, WebSocket reconnection",
+  "scripts": {
+    "all": "bash run-all.sh",
+    "consistency": "node test-consistency-window.js",
+    "burst": "node test-burst.js",
+    "throughput": "node test-throughput-latency.js",
+    "lambda-throughput": "node test-lambda-throughput.js",
+    "ws-reconnect": "node test-ws-reconnection.js",
+    "resilience": "node test-resilience.js",
+    "report": "node generate-report.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1037.0",
+    "@aws-sdk/lib-dynamodb": "^3.1037.0",
+    "ws": "^8.18.2"
+  }
+}
