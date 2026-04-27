@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { queryRecentActivity } = require('./recentActivityQuery');
 
 function createHttpServer({ connectionManager, backpressure, queryTop10 }) {
   const app = express();
@@ -36,14 +37,21 @@ function createHttpServer({ connectionManager, backpressure, queryTop10 }) {
       });
     }
 
-    // Query DynamoDB for the current top 10 to include in the broadcast
+    // Query DynamoDB for the current top 10 and recent activity to include in the broadcast
     let top10 = [];
+    let recentActivity = [];
     try {
       console.info(`[httpServer] INFO: querying top10 for broadcast movieId=${movieId}`);
       top10 = await queryTop10();
       console.info(`[httpServer] INFO: top10 query ok count=${top10.length}`);
     } catch (err) {
       console.error(`[httpServer] ERROR: DynamoDB queryTop10 failed movieId=${movieId} message=${err.message}`);
+    }
+    try {
+      recentActivity = await queryRecentActivity();
+      console.info(`[httpServer] INFO: recentActivity query ok count=${recentActivity.length}`);
+    } catch (err) {
+      console.error(`[httpServer] ERROR: queryRecentActivity failed movieId=${movieId} message=${err.message}`);
     }
 
     const deliveredAt = new Date().toISOString();
@@ -65,6 +73,7 @@ function createHttpServer({ connectionManager, backpressure, queryTop10 }) {
       deliveredAt,
       connectedClients: connectionManager.getCount(),
       top10,
+      recentActivity,
     });
 
     console.info(

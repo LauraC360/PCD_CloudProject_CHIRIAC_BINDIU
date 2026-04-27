@@ -9,10 +9,25 @@ const { queryTop10 } = require('./statsQuery');
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const INTERNAL_PORT = parseInt(process.env.INTERNAL_PORT || '8081', 10);
 
-
 // WebSocket server (port PORT, default 8080)
+// The raw http.createServer handles both WS upgrades AND a /health GET
+const wsHttpServer = http.createServer((req, res) => {
+  // Health check endpoint on port 8080 for ALB
+  if (req.method === 'GET' && req.url === '/health') {
+    const body = JSON.stringify({
+      status: 'ok',
+      connectedClients: connectionManager ? connectionManager.getCount() : 0,
+      backpressureActive: backpressure ? backpressure.isActive() : false,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(body);
+    return;
+  }
+  // All other non-WS HTTP requests get 404
+  res.writeHead(404);
+  res.end();
+});
 
-const wsHttpServer = http.createServer();
 const { connectionManager } = createWsServer(wsHttpServer);
 
 // Backpressure — wired to connectionManager.broadcast

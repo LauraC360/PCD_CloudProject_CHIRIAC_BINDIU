@@ -3,6 +3,7 @@
 const WebSocket = require('ws');
 const { createConnectionManager } = require('./connectionManager');
 const { queryTop10 } = require('./statsQuery');
+const { queryRecentActivity } = require('./recentActivityQuery');
 
 // Builds a connected_clients_update payload — used on connect/disconnect
 // to notify other clients of the new count WITHOUT touching top10.
@@ -23,14 +24,21 @@ function createWsServer(httpServer) {
     const total = connectionManager.getCount();
     console.info(`[wsServer] INFO: client connected connectedClients=${total}`);
 
-    // Query top-10 from DynamoDB; fall back to empty array on error.
+    // Query top-10 and recent activity from DynamoDB; fall back to empty arrays on error.
     let top10 = [];
+    let recentActivity = [];
     try {
       console.info(`[wsServer] INFO: querying top10 for initial_state connectedClients=${total}`);
       top10 = await queryTop10();
       console.info(`[wsServer] INFO: top10 query ok count=${top10.length}`);
     } catch (err) {
       console.error(`[wsServer] ERROR: queryTop10 failed on connection message=${err.message}`);
+    }
+    try {
+      recentActivity = await queryRecentActivity();
+      console.info(`[wsServer] INFO: recentActivity query ok count=${recentActivity.length}`);
+    } catch (err) {
+      console.error(`[wsServer] ERROR: queryRecentActivity failed on connection message=${err.message}`);
     }
 
     // Send initial_state to the newly connected client only.
@@ -40,6 +48,7 @@ function createWsServer(httpServer) {
         deliveredAt: new Date().toISOString(),
         connectedClients: total,
         top10,
+        recentActivity,
       });
       ws.send(payload);
       console.info(`[wsServer] INFO: initial_state sent connectedClients=${total} top10Count=${top10.length}`);
