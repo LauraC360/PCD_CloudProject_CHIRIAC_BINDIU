@@ -99,6 +99,24 @@ export class InfraStack extends cdk.Stack {
       exportName: 'AnalyticsVpcId',
     });
 
+    // VPC Endpoints — allow Lambda in private isolated subnets to reach AWS services
+    // without internet access (no NAT gateway). Gateway endpoints are free.
+    this.vpc.addGatewayEndpoint('DynamoDbEndpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
+    });
+
+    // Interface endpoint for SSM (Lambda reads INTERNAL_SECRET_ARN at cold start)
+    this.vpc.addInterfaceEndpoint('SsmEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SSM,
+      privateDnsEnabled: true,
+    });
+
+    // Interface endpoint for CloudWatch Logs (Lambda writes logs)
+    this.vpc.addInterfaceEndpoint('CloudWatchLogsEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+      privateDnsEnabled: true,
+    });
+
     new cdk.CfnOutput(this, 'PublicSubnetIds', {
       value: this.vpc.publicSubnets.map(s => s.subnetId).join(','),
       description: 'Public subnet IDs (2 AZs)',
@@ -658,6 +676,9 @@ export class InfraStack extends cdk.Stack {
       securityGroups: [this.wsgSg],
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       assignPublicIp: true, // needed in public subnet without NAT gateway
+      healthCheckGracePeriod: Duration.seconds(180), // give the container 3 min to start before ALB health checks count
+      minHealthyPercent: 0, // allow 0 healthy tasks during deployment (single-task service)
+      maxHealthyPercent: 200,
     });
 
     // Task 3.7 — register ECS service with the pre-created Cloud Map service
@@ -675,8 +696,8 @@ export class InfraStack extends cdk.Stack {
       healthCheck: {
         path: '/health',
         healthyHttpCodes: '200',
-        interval: Duration.seconds(30),
-        timeout: Duration.seconds(5),
+        interval: Duration.seconds(180),
+        timeout: Duration.seconds(60),
         healthyThresholdCount: 2,
         unhealthyThresholdCount: 3,
       },
@@ -775,8 +796,7 @@ export class InfraStack extends cdk.Stack {
               { name: 'SQS_QUEUE_URL',     value: this.viewEventsQueue.queueUrl },
               { name: 'MONGO_DB_NAME',     value: 'sample_mflix' },
               { name: 'COGNITO_JWKS_URL',  value: `https://cognito-idp.${this.region}.amazonaws.com/${this.userPool.userPoolId}/.well-known/jwks.json` },
-              // MONGO_URL is fetched at runtime via SSM using the instance role
-              { name: 'MONGO_URL_SSM_ARN', value: this.mongoUrlParam.parameterArn },
+              { name: 'MONGO_URL',         value: 'mongodb+srv://pcd-user:BFm76EVoiWWfmtG7@pcd-cluster.sveuic.mongodb.net/sample_mflix?appName=pcd-cluster' },
             ],
           },
         },
