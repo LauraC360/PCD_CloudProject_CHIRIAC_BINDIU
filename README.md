@@ -4,6 +4,11 @@
 
 Un sistem distribuit de analytics în timp real construit pe baza API-ului REST Fast Lazy Bee (filme). Sistemul captează evenimente de vizualizare a filmelor, le procesează asincron printr-un pipeline cloud-native și afișează statistici live pe un dashboard în browser.
 
+**Echipă:**
+- Chiriac Laura-Florina - MISS2
+- Bejan Paul-Eusebiu - MISS2
+- Bindiu Ana-Maria - MISS2
+
 ---
 
 ## Arhitectură
