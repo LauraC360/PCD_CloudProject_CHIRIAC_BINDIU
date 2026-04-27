@@ -8,7 +8,9 @@ const EnvSchema = Type.Object({
   MONGO_URL: Type.String({ default: CONFIG_DEFAULTS.MONGO_URL }),
   MONGO_DB_NAME: Type.String({ default: CONFIG_DEFAULTS.MONGO_DB_NAME }),
   SQS_QUEUE_URL: Type.String(),
-  AWS_REGION: Type.String({ default: 'us-east-1' })
+  AWS_REGION: Type.String({ default: 'us-east-1' }),
+  COGNITO_JWKS_URL: Type.String(),
+  CLOUDWATCH_METRICS_FLUSH_INTERVAL_MS: Type.Number({ default: 30000 })
 });
 
 type EnvSchemaType = Static<typeof EnvSchema>;

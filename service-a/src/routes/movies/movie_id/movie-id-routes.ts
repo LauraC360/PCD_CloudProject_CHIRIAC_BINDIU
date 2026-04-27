@@ -30,11 +30,21 @@ const routes: RouteOptions[] = [
       const params = request.params as MovieIdObjectSchemaType;
       const movie = (await this.dataStore.fetchMovie(params.movie_id)) as MovieSchemaType;
 
+      // CloudWatch: record one GetMovieInvocations count per entry (after successful fetch).
+      this.cwMetrics?.recordInvocation();
+
+      // x-requested-at may be string | string[] | undefined; coerce safely.
+      const rawRequestedAt = request.headers['x-requested-at'];
+      const requestedAtHeader = Array.isArray(rawRequestedAt) ? rawRequestedAt[0] : rawRequestedAt;
+      const parsedRequestedAt = requestedAtHeader !== undefined ? Number(requestedAtHeader) : NaN;
+      const publishedAt = Number.isFinite(parsedRequestedAt) ? parsedRequestedAt : Date.now();
+
       this.sqsPublisher.publish({
         schemaVersion: '1.0',
         requestId: crypto.randomUUID(),
         movieId: params.movie_id,
-        publishedAt: new Date().toISOString()
+        title: movie.title,
+        publishedAt
       });
 
       if (acceptsHal(request)) {

@@ -34,11 +34,19 @@ const sqsPlugin = fp(
           })
         )
         .then(() => {
+          const latencyMs = Date.now() - startMs;
           totalPublished++;
-          totalPublishLatencyMs += Date.now() - startMs;
+          totalPublishLatencyMs += latencyMs;
+          // Feed CloudWatch metrics if the plugin is loaded (may not be in minimal test setups).
+          fastify.cwMetrics?.recordSqsPublishLatency(latencyMs);
+          fastify.log.info(
+            { movieId: event.movieId, requestId: event.requestId, latencyMs },
+            'View_Event published to SQS'
+          );
         })
         .catch((err: unknown) => {
           publishErrors++;
+          fastify.cwMetrics?.recordSqsPublishError();
           fastify.log.error(
             { err, movieId: event.movieId, requestId: event.requestId },
             'Failed to publish View_Event to SQS'

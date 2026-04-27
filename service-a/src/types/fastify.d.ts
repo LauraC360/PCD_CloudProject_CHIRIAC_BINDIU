@@ -3,6 +3,7 @@ import type { EnvSchemaType } from '../schemas/dotenv';
 import type { MovieCommentSchemaType, MovieSchemaType } from '../schemas/movies/data';
 import type { PaginatedSearchSchemaType, ResourceSchemaType } from '../schemas/movies/http';
 import type { SqsPublisher } from '../plugins/sqs';
+import type { CloudWatchMetrics } from '../plugins/cloudwatch-metrics';
 
 interface DataStore {
   checkUser: (email: string, password: string) => Promise<ResourceSchemaType<UserSchemaType>>;
@@ -28,5 +29,6 @@ declare module 'fastify' {
     mongo: FastifyMongoObject & FastifyMongoNestedObject;
     dataStore: DataStore;
     sqsPublisher: SqsPublisher;
+    cwMetrics: CloudWatchMetrics;
   }
 }

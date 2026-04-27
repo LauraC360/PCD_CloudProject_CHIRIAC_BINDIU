@@ -18,5 +18,6 @@ interface ViewEvent {
   schemaVersion: string;
   requestId: string;
   movieId: string;
-  publishedAt: string;
+  title: string;
+  publishedAt: number;
 }

@@ -1,7 +1,12 @@
 import * as cdk from 'aws-cdk-lib/core';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
+import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -9,6 +14,9 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as apprunner from 'aws-cdk-lib/aws-apprunner';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as budgets from 'aws-cdk-lib/aws-budgets';
 import { Construct } from 'constructs';
 
 export class InfraStack extends cdk.Stack {
@@ -34,6 +42,31 @@ export class InfraStack extends cdk.Stack {
   // Cognito User Pool (Task 5)
   public readonly userPool: cognito.UserPool;
   public readonly userPoolClient: cognito.UserPoolClient;
+  // ECR repository for WebSocket Gateway image (Task 3.1)
+  public readonly wsgRepository: ecr.Repository;
+  // ECS Fargate cluster (Task 3.2)
+  public readonly ecsCluster: ecs.Cluster;
+  // IAM task role for WSG ECS task (Task 3.3)
+  public readonly wsgTaskRole: iam.Role;
+  // ECS Task Definition for WSG (Task 3.4)
+  public readonly wsgTaskDefinition: ecs.FargateTaskDefinition;
+  // ALB + security group for WSG (Task 3.5)
+  public readonly wsgAlb: elbv2.ApplicationLoadBalancer;
+  public readonly wsgAlbSg: ec2.SecurityGroup;
+  // CloudFront distribution in front of ALB for wss:// support (Task 3.5)
+  public readonly wsgCloudFront: cloudfront.Distribution;
+  // ECS Fargate service (Task 3.6 + 3.7)
+  public readonly wsgService: ecs.FargateService;
+  // ECR repository for Service A image (Task 4.1)
+  public readonly serviceARepository: ecr.Repository;
+  // IAM instance role for App Runner (Task 4.2)
+  public readonly serviceAInstanceRole: iam.Role;
+  // App Runner service for Service A (Task 4.3)
+  public readonly serviceAAppRunner: apprunner.CfnService;
+  // S3 bucket for frontend static assets (Task 6.1)
+  public readonly frontendBucket: s3.Bucket;
+  // CloudFront distribution for frontend + WebSocket proxy (Task 6.2)
+  public readonly frontendCloudFront: cloudfront.Distribution;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -345,7 +378,9 @@ export class InfraStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'src/handler.handler',
       code: lambda.Code.fromAsset('../event-processor', {
-        exclude: ['node_modules', '*.test.js', 'coverage', '.env*'],
+        // node_modules is included — handler.js requires @aws-sdk/* packages
+        // which are not available in the Lambda runtime layer for nodejs22.x
+        exclude: ['src/__tests__', 'coverage', '.env*', 'deploy.sh', '*.md'],
       }),
       role: this.eventProcessorRole,
       timeout: Duration.seconds(30),
@@ -452,6 +487,432 @@ export class InfraStack extends cdk.Stack {
       value: `https://analytics-dashboard-${this.account}.auth.${this.region}.amazoncognito.com`,
       description: 'Cognito hosted UI base URL',
       exportName: 'AnalyticsCognitoHostedUiUrl',
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 3.1 — ECR repository for WebSocket Gateway
+    // -------------------------------------------------------------------------
+    this.wsgRepository = new ecr.Repository(this, 'WsgRepository', {
+      repositoryName: 'websocket-gateway',
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+
+    new cdk.CfnOutput(this, 'WsgEcrRepositoryUri', {
+      value: this.wsgRepository.repositoryUri,
+      description: 'ECR repository URI for websocket-gateway image',
+      exportName: 'AnalyticsWsgEcrRepositoryUri',
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 3.2 — ECS Fargate cluster
+    // -------------------------------------------------------------------------
+    this.ecsCluster = new ecs.Cluster(this, 'AnalyticsCluster', {
+      clusterName: 'analytics-cluster',
+      vpc: this.vpc,
+    });
+
+    new cdk.CfnOutput(this, 'EcsClusterName', {
+      value: this.ecsCluster.clusterName,
+      description: 'ECS Fargate cluster name',
+      exportName: 'AnalyticsEcsClusterName',
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 3.3 — IAM task role ecs-wsg-task-role
+    // -------------------------------------------------------------------------
+    this.wsgTaskRole = new iam.Role(this, 'WsgTaskRole', {
+      roleName: 'ecs-wsg-task-role',
+      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+      description: 'Task role for WebSocket Gateway ECS task',
+    });
+
+    this.wsgTaskRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'DynamoDbRead',
+      actions: ['dynamodb:Query', 'dynamodb:GetItem'],
+      resources: [
+        this.movieStatsTable.tableArn,
+        `${this.movieStatsTable.tableArn}/index/*`,
+        this.recentActivityTable.tableArn,
+      ],
+    }));
+
+    this.wsgTaskRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CloudWatchMetrics',
+      actions: ['cloudwatch:PutMetricData', 'cloudwatch:GetMetricData'],
+      resources: ['*'],
+    }));
+
+    this.internalSecretParam.grantRead(this.wsgTaskRole);
+
+    new cdk.CfnOutput(this, 'WsgTaskRoleArn', {
+      value: this.wsgTaskRole.roleArn,
+      description: 'IAM task role ARN for WSG ECS task',
+      exportName: 'AnalyticsWsgTaskRoleArn',
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 3.4 — ECS Task Definition
+    // -------------------------------------------------------------------------
+    // Execution role: pulls image from ECR and writes CloudWatch Logs
+    const wsgExecutionRole = new iam.Role(this, 'WsgExecutionRole', {
+      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'),
+      ],
+    });
+
+    this.wsgTaskDefinition = new ecs.FargateTaskDefinition(this, 'WsgTaskDef', {
+      cpu: 512,
+      memoryLimitMiB: 1024,
+      taskRole: this.wsgTaskRole,
+      executionRole: wsgExecutionRole,
+    });
+
+    this.wsgTaskDefinition.addContainer('WsgContainer', {
+      image: ecs.ContainerImage.fromEcrRepository(this.wsgRepository, 'latest'),
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'wsg' }),
+      environment: {
+        DYNAMODB_TABLE_STATS:           this.movieStatsTable.tableName,
+        DYNAMODB_TABLE_RECENT_ACTIVITY: this.recentActivityTable.tableName,
+        AWS_REGION:                     this.region,
+        PORT:                           '8080',
+        INTERNAL_PORT:                  '8081',
+        COGNITO_JWKS_URL:               `https://cognito-idp.${this.region}.amazonaws.com/${this.userPool.userPoolId}/.well-known/jwks.json`,
+        // INTERNAL_SECRET is fetched at runtime via SSM GetParameter using this ARN
+        INTERNAL_SECRET_ARN:            this.internalSecretParam.parameterArn,
+        CLOUDWATCH_POLL_INTERVAL_MS:    '5000',
+      },
+      portMappings: [
+        { containerPort: 8080, protocol: ecs.Protocol.TCP },
+        { containerPort: 8081, protocol: ecs.Protocol.TCP },
+      ],
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 3.5 — ALB (HTTP, internal) + CloudFront (HTTPS/WSS, public)
+    // ACM requires a custom domain. Instead, CloudFront provides a free
+    // *.cloudfront.net HTTPS domain — browsers can connect via wss:// with
+    // no domain purchase needed. CloudFront → ALB on port 80 internally.
+    // -------------------------------------------------------------------------
+    this.wsgAlbSg = new ec2.SecurityGroup(this, 'WsgAlbSg', {
+      vpc: this.vpc,
+      securityGroupName: 'wsg-alb-sg',
+      description: 'Security group for WSG Application Load Balancer',
+      allowAllOutbound: true,
+    });
+    // ALB only needs to accept traffic from CloudFront managed prefix list
+    // (and optionally all IPv4 for direct health checks during development)
+    this.wsgAlbSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'Allow HTTP from CloudFront and health checks');
+
+    // Allow ALB → ECS task on port 8080
+    this.wsgSg.addIngressRule(this.wsgAlbSg, ec2.Port.tcp(8080), 'Allow ALB to reach WSG on port 8080');
+
+    this.wsgAlb = new elbv2.ApplicationLoadBalancer(this, 'WsgAlb', {
+      loadBalancerName: 'wsg-alb',
+      vpc: this.vpc,
+      internetFacing: true,
+      securityGroup: this.wsgAlbSg,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+    });
+
+    new cdk.CfnOutput(this, 'WsgAlbDnsName', {
+      value: this.wsgAlb.loadBalancerDnsName,
+      description: 'ALB DNS name (internal — use CloudFront domain for public access)',
+      exportName: 'AnalyticsWsgAlbDnsName',
+    });
+
+    // CloudFront distribution — public HTTPS/WSS endpoint
+    // Origin: ALB over HTTP (TLS terminated at CloudFront edge)
+    // WebSocket support: enabled by forwarding all headers and disabling caching
+    const albOrigin = new origins.HttpOrigin(this.wsgAlb.loadBalancerDnsName, {
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+      httpPort: 80,
+    });
+
+    this.wsgCloudFront = new cloudfront.Distribution(this, 'WsgCloudFront', {
+      comment: 'WebSocket Gateway — public wss:// endpoint',
+      defaultBehavior: {
+        origin: albOrigin,
+        // Disable caching — WebSocket and health check responses must not be cached
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        // Forward all headers so the WebSocket upgrade handshake passes through
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+    });
+
+    new cdk.CfnOutput(this, 'WsgCloudFrontDomain', {
+      value: this.wsgCloudFront.distributionDomainName,
+      description: 'CloudFront domain for WebSocket Gateway — use wss://<domain>/ws in frontend',
+      exportName: 'AnalyticsWsgCloudFrontDomain',
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 3.6 + 3.7 — ECS Fargate service with Cloud Map registration
+    // -------------------------------------------------------------------------
+    this.wsgService = new ecs.FargateService(this, 'WsgService', {
+      cluster: this.ecsCluster,
+      taskDefinition: this.wsgTaskDefinition,
+      desiredCount: 1,
+      securityGroups: [this.wsgSg],
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      assignPublicIp: true, // needed in public subnet without NAT gateway
+    });
+
+    // Task 3.7 — register ECS service with the pre-created Cloud Map service
+    // so Lambda can resolve wsg.local:8081 via DNS
+    this.wsgService.associateCloudMapService({
+      service: this.wsgCloudMapService,
+    });
+
+    // ALB target group → ECS service on port 8080
+    const wsgTargetGroup = new elbv2.ApplicationTargetGroup(this, 'WsgTargetGroup', {
+      vpc: this.vpc,
+      port: 8080,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targetType: elbv2.TargetType.IP,
+      healthCheck: {
+        path: '/health',
+        healthyHttpCodes: '200',
+        interval: Duration.seconds(30),
+        timeout: Duration.seconds(5),
+        healthyThresholdCount: 2,
+        unhealthyThresholdCount: 3,
+      },
+      // WebSocket connections need a longer deregistration delay
+      deregistrationDelay: Duration.seconds(30),
+    });
+
+    // Attach ECS service to target group
+    this.wsgService.attachToApplicationTargetGroup(wsgTargetGroup);
+
+    // ALB listener on port 80
+    this.wsgAlb.addListener('WsgHttpListener', {
+      port: 80,
+      defaultTargetGroups: [wsgTargetGroup],
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 4.1 — ECR repository for Service A
+    // -------------------------------------------------------------------------
+    this.serviceARepository = new ecr.Repository(this, 'ServiceARepository', {
+      repositoryName: 'service-a',
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+
+    new cdk.CfnOutput(this, 'ServiceAEcrRepositoryUri', {
+      value: this.serviceARepository.repositoryUri,
+      description: 'ECR repository URI for service-a image',
+      exportName: 'AnalyticsServiceAEcrRepositoryUri',
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 4.2 — IAM instance role for App Runner (Service A)
+    // App Runner instance role: grants the running container permission to
+    // publish to SQS and emit CloudWatch metrics.
+    // -------------------------------------------------------------------------
+    this.serviceAInstanceRole = new iam.Role(this, 'ServiceAInstanceRole', {
+      roleName: 'apprunner-service-a-instance-role',
+      assumedBy: new iam.ServicePrincipal('tasks.apprunner.amazonaws.com'),
+      description: 'Instance role for Service A App Runner - SQS publish + CloudWatch metrics',
+    });
+
+    this.serviceAInstanceRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'SqsPublish',
+      actions: ['sqs:SendMessage'],
+      resources: [this.viewEventsQueue.queueArn],
+    }));
+
+    this.serviceAInstanceRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CloudWatchMetrics',
+      actions: ['cloudwatch:PutMetricData'],
+      resources: ['*'],
+    }));
+
+    // SSM — read MONGO_URL at runtime
+    this.mongoUrlParam.grantRead(this.serviceAInstanceRole);
+
+    new cdk.CfnOutput(this, 'ServiceAInstanceRoleArn', {
+      value: this.serviceAInstanceRole.roleArn,
+      description: 'IAM instance role ARN for Service A App Runner',
+      exportName: 'AnalyticsServiceAInstanceRoleArn',
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 4.3 — App Runner service for Service A
+    // Uses CfnService (L1) because the L2 construct does not yet support
+    // all App Runner features (auto-scaling configuration, instance role).
+    // Image: pulled from ECR serviceARepository on every deploy.
+    // Env vars: SQS_QUEUE_URL, AWS_REGION, MONGO_URL (from SSM at runtime via
+    // instance role), MONGO_DB_NAME, COGNITO_JWKS_URL, APP_PORT=3000.
+    // -------------------------------------------------------------------------
+
+    // Access role: allows App Runner to pull images from ECR
+    const serviceAAccessRole = new iam.Role(this, 'ServiceAAccessRole', {
+      assumedBy: new iam.ServicePrincipal('build.apprunner.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSAppRunnerServicePolicyForECRAccess'),
+      ],
+    });
+
+    this.serviceAAppRunner = new apprunner.CfnService(this, 'ServiceAAppRunner', {
+      serviceName: 'service-a',
+      sourceConfiguration: {
+        authenticationConfiguration: {
+          accessRoleArn: serviceAAccessRole.roleArn,
+        },
+        autoDeploymentsEnabled: false, // manual deploys - push image then trigger update
+        imageRepository: {
+          imageIdentifier: `${this.serviceARepository.repositoryUri}:latest`,
+          imageRepositoryType: 'ECR',
+          imageConfiguration: {
+            port: '3000',
+            runtimeEnvironmentVariables: [
+              { name: 'NODE_ENV',          value: 'production' },
+              { name: 'APP_PORT',          value: '3000' },
+              { name: 'AWS_REGION',        value: this.region },
+              { name: 'SQS_QUEUE_URL',     value: this.viewEventsQueue.queueUrl },
+              { name: 'MONGO_DB_NAME',     value: 'sample_mflix' },
+              { name: 'COGNITO_JWKS_URL',  value: `https://cognito-idp.${this.region}.amazonaws.com/${this.userPool.userPoolId}/.well-known/jwks.json` },
+              // MONGO_URL is fetched at runtime via SSM using the instance role
+              { name: 'MONGO_URL_SSM_ARN', value: this.mongoUrlParam.parameterArn },
+            ],
+          },
+        },
+      },
+      instanceConfiguration: {
+        instanceRoleArn: this.serviceAInstanceRole.roleArn,
+        cpu: '0.25 vCPU',
+        memory: '0.5 GB',
+      },
+      autoScalingConfigurationArn: undefined, // uses App Runner default (min 1, max 10)
+    });
+
+    new cdk.CfnOutput(this, 'ServiceAAppRunnerUrl', {
+      value: `https://${this.serviceAAppRunner.attrServiceUrl}`,
+      description: 'App Runner service URL for Service A',
+      exportName: 'AnalyticsServiceAAppRunnerUrl',
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 6.1 — S3 bucket for frontend static assets
+    // Block all public access; only CloudFront OAC can read objects.
+    // -------------------------------------------------------------------------
+    this.frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: RemovalPolicy.DESTROY,
+      autoDeleteObjects: true, // empties bucket on cdk destroy
+      versioned: false,
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 6.2 + 6.3 — CloudFront distribution with two origins:
+    //   Origin 1 (default /*): S3 bucket via OAC — serves frontend files
+    //   Origin 2 (/ws path): ALB HTTP origin — proxies WebSocket connections
+    // -------------------------------------------------------------------------
+
+    // OAC for S3 origin (replaces legacy OAI)
+    const oac = new cloudfront.S3OriginAccessControl(this, 'FrontendOac', {
+      description: 'OAC for frontend S3 bucket',
+    });
+
+    const s3Origin = origins.S3BucketOrigin.withOriginAccessControl(
+      this.frontendBucket,
+      { originAccessControl: oac },
+    );
+
+    // ALB origin for WebSocket proxying (same ALB as WSG)
+    const wsgAlbOrigin = new origins.HttpOrigin(this.wsgAlb.loadBalancerDnsName, {
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+      httpPort: 80,
+    });
+
+    this.frontendCloudFront = new cloudfront.Distribution(this, 'FrontendCloudFront', {
+      comment: 'Frontend dashboard + WebSocket Gateway proxy',
+      defaultRootObject: 'index.html',
+      defaultBehavior: {
+        // Default: serve frontend files from S3
+        origin: s3Origin,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+      },
+      additionalBehaviors: {
+        // /ws path: proxy to ALB for WebSocket connections
+        '/ws': {
+          origin: wsgAlbOrigin,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        // /health: proxy to ALB for health checks
+        '/health': {
+          origin: wsgAlbOrigin,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+      },
+    });
+
+    new cdk.CfnOutput(this, 'FrontendCloudFrontDomain', {
+      value: this.frontendCloudFront.distributionDomainName,
+      description: 'CloudFront domain for frontend dashboard — use https://<domain>/ to open dashboard, wss://<domain>/ws for WebSocket',
+      exportName: 'AnalyticsFrontendCloudFrontDomain',
+    });
+
+    new cdk.CfnOutput(this, 'FrontendBucketName', {
+      value: this.frontendBucket.bucketName,
+      description: 'S3 bucket name for frontend static assets',
+      exportName: 'AnalyticsFrontendBucketName',
+    });
+
+    // -------------------------------------------------------------------------
+    // Task 7.1 — AWS Budget alert: email when monthly spend exceeds $10
+    // -------------------------------------------------------------------------
+    new budgets.CfnBudget(this, 'MonthlyBudget', {
+      budget: {
+        budgetName: 'analytics-dashboard-monthly',
+        budgetType: 'COST',
+        timeUnit: 'MONTHLY',
+        budgetLimit: {
+          amount: 10,
+          unit: 'USD',
+        },
+      },
+      notificationsWithSubscribers: [
+        {
+          notification: {
+            notificationType: 'ACTUAL',
+            comparisonOperator: 'GREATER_THAN',
+            threshold: 80, // alert at 80% of $10 = $8
+            thresholdType: 'PERCENTAGE',
+          },
+          subscribers: [
+            {
+              subscriptionType: 'EMAIL',
+              address: 'ana.bindiu33@gmail.com', // placeholder — update with real email after deploy
+            },
+          ],
+        },
+        {
+          notification: {
+            notificationType: 'ACTUAL',
+            comparisonOperator: 'GREATER_THAN',
+            threshold: 100,
+            thresholdType: 'PERCENTAGE',
+          },
+          subscribers: [
+            {
+              subscriptionType: 'EMAIL',
+              address: 'ana.bindiu33@gmail.com', // placeholder — update with real email after deploy
+            },
+          ],
+        },
+      ],
     });
   }
 }

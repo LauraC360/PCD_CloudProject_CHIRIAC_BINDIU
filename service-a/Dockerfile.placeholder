@@ -1,0 +1,23 @@
+# Placeholder image - passes App Runner /health check while real service-a is being built.
+# Build and push this first so App Runner can start a healthy task during CDK deploy.
+#
+# Usage:
+#   docker build -f Dockerfile.placeholder -t service-a:placeholder .
+#   docker tag service-a:placeholder <ecr-uri>/service-a:latest
+#   docker push <ecr-uri>/service-a:latest
+
+FROM node:22-alpine
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+WORKDIR /app
+
+COPY placeholder.js ./
+
+RUN chown -R appuser:appgroup /app
+
+USER appuser
+
+EXPOSE 3000
+
+CMD ["node", "placeholder.js"]

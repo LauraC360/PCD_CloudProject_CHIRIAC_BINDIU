@@ -26,6 +26,7 @@ async function queryTop10() {
 
   return (response.Items || []).map((item) => ({
     movieId: item.movieId,
+    title: item.title,
     viewCount: item.viewCount,
     lastViewedAt: item.lastViewedAt,
   }));

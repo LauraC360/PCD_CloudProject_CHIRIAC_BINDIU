@@ -77,14 +77,19 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 ### Task 3: CDK — ECS Fargate + ALB + ACM (WebSocket Gateway)
 
-- [ ] 3.1 Create ECR repository `websocket-gateway`
-- [ ] 3.2 Create ECS Fargate cluster
-- [ ] 3.3 Create IAM task role `ecs-wsg-task-role`: `dynamodb:Query`, `dynamodb:GetItem`, `cloudwatch:PutMetricData`, `cloudwatch:GetMetricData`
-- [ ] 3.4 Create ECS Task Definition for WSG: image from ECR `websocket-gateway`, 512 CPU / 1024 MB memory; inject env vars `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `AWS_REGION`, `PORT=8080`, `INTERNAL_PORT=8081`, `COGNITO_JWKS_URL`, `INTERNAL_SECRET` (from SSM), `CLOUDWATCH_POLL_INTERVAL_MS=5000`, `CLOUDWATCH_METRICS_FLUSH_INTERVAL_MS=30000`
-- [ ] 3.5 Create public ALB with HTTPS listener (port 443); request ACM certificate for WSG domain; add HTTP→HTTPS redirect on port 80; forward to target group on port 8080
-- [ ] 3.6 Create ECS Fargate service: `desiredCount=1`, public subnet, security group allowing inbound 8080 from ALB + inbound 8081 from Lambda security group only (port 8081 NOT exposed via ALB)
-- [ ] 3.7 Register WSG ECS service with Cloud Map under `wsg.local` so Lambda can resolve it via DNS
-- [ ] 3.8 Verify: ECS service shows 1/1 running tasks; ALB health check passes; `curl https://<ALB_DOMAIN>/health` returns 200; port 8081 is NOT reachable from outside the VPC
+- [x] 3.1 Create ECR repository `websocket-gateway`
+- [x] 3.2 Create ECS Fargate cluster
+- [x] 3.3 Create IAM task role `ecs-wsg-task-role`: `dynamodb:Query`, `dynamodb:GetItem`, `cloudwatch:PutMetricData`, `cloudwatch:GetMetricData`
+- [x] 3.4 Create ECS Task Definition for WSG: image from ECR `websocket-gateway`, 512 CPU / 1024 MB memory; inject env vars `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `AWS_REGION`, `PORT=8080`, `INTERNAL_PORT=8081`, `COGNITO_JWKS_URL`, `INTERNAL_SECRET` (from SSM), `CLOUDWATCH_POLL_INTERVAL_MS=5000`; add `CLOUDWATCH_METRICS_FLUSH_INTERVAL_MS=30000` only if latency tracker bonus (11.10) is implemented
+- [x] 3.5 Add CloudFront distribution in front of the ALB for `wss://` support (no custom domain needed — CloudFront provides a free `*.cloudfront.net` HTTPS domain):
+  - Create CloudFront distribution with ALB as HTTP origin (CloudFront → ALB on port 80 internally)
+  - Add cache behavior for `/ws` path: forward all headers, disable caching, enable WebSocket support (`AllowedMethods: GET/HEAD`, `CachedMethods: GET/HEAD`, `CachePolicyId: CachingDisabled`)
+  - Default behavior (`/*`) forwards to ALB as well (health check, internal notify not exposed)
+  - Output CloudFront domain as `WsgCloudFrontDomain` — this is the public `wss://` endpoint for the frontend
+  - Note: port 8081 (`/internal/notify`) is still only reachable from within the VPC via Lambda → Cloud Map, NOT via CloudFront
+- [x] 3.6 Create ECS Fargate service: `desiredCount=1`, public subnet, security group allowing inbound 8080 from ALB + inbound 8081 from Lambda security group only (port 8081 NOT exposed via ALB)
+- [x] 3.7 Register WSG ECS service with Cloud Map under `wsg.local` so Lambda can resolve it via DNS
+- [x] 3.8 Verify: ECS service shows 1/1 running tasks; ALB health check passes; `curl http://<ALB_DOMAIN>/health` returns 200; `curl https://<CLOUDFRONT_DOMAIN>/health` returns 200; port 8081 is NOT reachable from outside the VPC
 
 **Validates:** Requirements 5.9, 5.10, 10.7
 
@@ -105,11 +110,11 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 ### Task 4: CDK — App Runner + ECR (Service A)
 
-- [ ] 4.1 Create ECR repository `service-a`
-- [ ] 4.2 Create IAM role for App Runner instance: `sqs:SendMessage`, `cloudwatch:PutMetricData`
-- [ ] 4.3 Create App Runner service from ECR `service-a` image; inject env vars `SQS_QUEUE_URL`, `AWS_REGION`, `MONGO_URL` (from SSM), `MONGO_DB_NAME`, `COGNITO_JWKS_URL`, `APP_PORT=3000`; configure auto-scaling (min 1, max 5 instances)
-- [ ] 4.4 Create `service-a/Dockerfile` using two-stage build: stage 1 runs `npm ci` + `npm run build` (TypeScript compile); stage 2 copies `dist/` and runs `npm ci --omit=dev`, exposes port 3000, CMD `node dist/src/server.js`
-- [ ] 4.5 Create `service-a/.env.example` documenting all required env vars: `NODE_ENV`, `APP_PORT`, `MONGO_URL`, `MONGO_DB_NAME`, `SQS_QUEUE_URL`, `AWS_REGION`, `COGNITO_JWKS_URL`
+- [x] 4.1 Create ECR repository `service-a`
+- [x] 4.2 Create IAM role for App Runner instance: `sqs:SendMessage`, `cloudwatch:PutMetricData`
+- [x] 4.3 Create App Runner service from ECR `service-a` image; inject env vars `SQS_QUEUE_URL`, `AWS_REGION`, `MONGO_URL` (from SSM), `MONGO_DB_NAME`, `COGNITO_JWKS_URL`, `APP_PORT=3000`; configure auto-scaling (min 1, max 5 instances)
+- [x] 4.4 Create `service-a/Dockerfile` using two-stage build: stage 1 runs `npm ci` + `npm run build` (TypeScript compile); stage 2 copies `dist/` and runs `npm ci --omit=dev`, exposes port 3000, CMD `node dist/src/server.js`
+- [x] 4.5 Create `service-a/.env.example` documenting all required env vars: `NODE_ENV`, `APP_PORT`, `MONGO_URL`, `MONGO_DB_NAME`, `SQS_QUEUE_URL`, `AWS_REGION`, `COGNITO_JWKS_URL`
 - [ ] 4.6 Verify: App Runner service shows status `Running`; `curl https://<APP_RUNNER_URL>/health` returns 200; `curl https://<APP_RUNNER_URL>/api/v1/movies` returns movie data (with valid JWT)
 
 **Validates:** Requirements 10.6, 10.8, 10.9
@@ -130,10 +135,14 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 ### Task 6: CDK — S3 + CloudFront (Frontend)
 
-- [ ] 6.1 Create S3 bucket for frontend (block all public access; CloudFront OAC only)
-- [ ] 6.2 Create CloudFront distribution: origin = S3 bucket, default root object `index.html`, HTTPS only; attach Cognito auth via Lambda@Edge or CloudFront function if time permits (otherwise Cognito hosted UI handles auth at app level)
-- [ ] 6.3 Output CloudFront domain as CDK stack output
-- [ ] 6.4 Verify: upload a test `index.html` to S3; confirm it's accessible via CloudFront URL but NOT directly via S3 URL (403 on direct S3 access)
+- [x] 6.1 Create S3 bucket for frontend (block all public access; CloudFront OAC only)
+- [ ] 6.2 Create CloudFront distribution with two origins:
+  - **Origin 1 (default `/*`)**: S3 bucket via OAC — serves `index.html`, `app.js`, `dashboard.js`, `charts.js`
+  - **Origin 2 (`/ws` path pattern)**: ALB HTTP origin — proxies WebSocket connections; disable caching, forward all headers, enable WebSocket
+  - Default root object: `index.html`; HTTPS only (redirect HTTP → HTTPS)
+  - Update Cognito app client callback URLs to include the CloudFront domain
+- [x] 6.3 Output CloudFront domain as `FrontendCloudFrontDomain` CDK stack output
+- [ ] 6.4 Verify: upload a test `index.html` to S3; confirm it's accessible via `https://<CLOUDFRONT_DOMAIN>/` but NOT directly via S3 URL (403 on direct S3 access); confirm `wscat -c wss://<CLOUDFRONT_DOMAIN>/ws` connects successfully
 
 **Validates:** Requirements 6.5, 10.2
 
@@ -141,9 +150,9 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 ### Task 7: CDK — Cost Protection
 
-- [ ] 7.1 Create AWS Budget alert: monthly spend threshold $10, email notification
+- [x] 7.1 Create AWS Budget alert: monthly spend threshold $10, email notification
 - [ ] 7.2 Set Lambda `event-processor` reserved concurrency to 10 (already done in Task 2.2 — verify)
-- [ ] 7.3 Add `removalPolicy: DESTROY` to all DynamoDB tables and S3 bucket so `cdk destroy` cleans up fully after the presentation
+- [x] 7.3 Add `removalPolicy: DESTROY` to all DynamoDB tables and S3 bucket so `cdk destroy` cleans up fully after the presentation
 - [ ] 7.4 Verify: AWS Budgets console shows the $10 alert configured; Lambda concurrency limit shows as 10 in AWS Console
 
 **Validates:** Requirements 14.1, 14.2, 14.4
@@ -155,7 +164,7 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 - [ ] 8.1 Deploy full CDK stack: `cdk deploy --all`
 - [ ] 8.2 Build and push Service A Docker image to ECR; trigger App Runner redeploy
 - [ ] 8.3 Build and push WSG Docker image to ECR; force ECS service update
-- [ ] 8.4 Connect a WebSocket client to `wss://<ALB_DOMAIN>/ws` and verify `initial_state` is received
+- [ ] 8.4 Connect a WebSocket client to `wss://<CLOUDFRONT_DOMAIN>/ws` and verify `initial_state` is received
 - [ ] 8.5 Call `GET /api/v1/movies/:movie_id` on App Runner URL with a valid Cognito JWT; verify a `stats_update` arrives on the WebSocket client within 5 seconds
 - [ ] 8.6 Verify `MovieStats` DynamoDB item has `viewCount` incremented after the call
 - [ ] 8.7 Verify `RecentActivity` DynamoDB has a new item with `pk = "ACTIVITY#<today>"`
@@ -168,19 +177,19 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 ### Task 9: Service A — Fix View Event Publishing
 
-- [ ] 9.1 Merge `laura-dev` branch into `ana-dev` (or vice versa) to get the SQS plugin, metrics route, and WSG scaffolding
-- [ ] 9.2 Fix `movie-id-routes.ts`: add `title: movie.title` to the `sqsPublisher.publish()` call
-- [ ] 9.3 Fix `movie-id-routes.ts`: change `publishedAt: new Date().toISOString()` to `publishedAt: Number(request.headers['x-requested-at']) || Date.now()` (epoch ms)
-- [ ] 9.4 Fix `resources.d.ts`: change `ViewEvent.publishedAt` type from `string` to `number`; add `title: string` field
-- [ ] 9.5 Add `COGNITO_JWKS_URL: Type.String()` to `dotenv.ts` schema
-- [ ] 9.6 Add Service A CloudWatch publishing: on each `GET /movies/:movie_id` call, publish `GetMovieInvocations` (count), `SqsPublishErrors` (count), `SqsPublishLatency` (ms) to CloudWatch namespace `AnalyticsDashboard` via `PutMetricData`; batch publishes to avoid per-request API calls (flush every 30s or on process exit)
-- [ ] 9.7 Create `service-a/src/plugins/cognito-auth.ts`: register `@fastify/jwt` with the Cognito JWKS endpoint; add `preHandler` hook to validate JWT on all routes except `/health` and `/metrics`
-- [ ] 9.8 Write unit tests: verify `sqsPublisher.publish` is called with correct `movieId`, `title`, and epoch ms `publishedAt` on 200 response; verify NOT called on 404
-- [ ] 9.9 Write property-based test P4 (Serialization Round-Trip): generate random `ViewEvent` objects; serialize → deserialize; assert all fields identical including `title` and numeric `publishedAt`; tag `// Feature: realtime-analytics-dashboard, Property 4: Serialization Round-Trip`; minimum 100 iterations
-- [ ] 9.10 Logging: ensure every significant action in Service A logs at appropriate level — `INFO` on successful SQS publish (with `movieId`, `requestId`), `ERROR` on SQS failure (with `movieId`, `requestId`, error message), `INFO` on server startup with port and environment, `WARN` on JWT validation failure with request path
-- [ ] 9.11 Verify: run `npm test` in `service-a/` — all tests pass and coverage thresholds met
+- [x] 9.1 Merge `laura-dev` branch into `ana-dev` (or vice versa) to get the SQS plugin, metrics route, and WSG scaffolding
+- [x] 9.2 Fix `movie-id-routes.ts`: add `title: movie.title` to the `sqsPublisher.publish()` call
+- [x] 9.3 Fix `movie-id-routes.ts`: change `publishedAt: new Date().toISOString()` to `publishedAt: Number(request.headers['x-requested-at']) || Date.now()` (epoch ms)
+- [x] 9.4 Fix `resources.d.ts`: change `ViewEvent.publishedAt` type from `string` to `number`; add `title: string` field
+- [x] 9.5 Add `COGNITO_JWKS_URL: Type.String()` to `dotenv.ts` schema
+- [x] 9.6 Add Service A CloudWatch publishing: on each `GET /movies/:movie_id` call, publish `GetMovieInvocations` (count), `SqsPublishErrors` (count), `SqsPublishLatency` (ms) to CloudWatch namespace `AnalyticsDashboard` via `PutMetricData`; batch publishes to avoid per-request API calls (flush every 30s or on process exit)
+- [x] 9.7 Create `service-a/src/plugins/cognito-auth.ts`: register `@fastify/jwt` with the Cognito JWKS endpoint; add `preHandler` hook to validate JWT on all routes except `/health` and `/metrics`
+- [x] 9.8 Write unit tests: verify `sqsPublisher.publish` is called with correct `movieId`, `title`, and epoch ms `publishedAt` on 200 response; verify NOT called on 404
+- [x] 9.9 Write property-based test P4 (Serialization Round-Trip): generate random `ViewEvent` objects; serialize → deserialize; assert all fields identical including `title` and numeric `publishedAt`; tag `// Feature: realtime-analytics-dashboard, Property 4: Serialization Round-Trip`; minimum 100 iterations
+- [x] 9.10 Logging: ensure every significant action in Service A logs at appropriate level — `INFO` on successful SQS publish (with `movieId`, `requestId`), `ERROR` on SQS failure (with `movieId`, `requestId`, error message), `INFO` on server startup with port and environment, `WARN` on JWT validation failure with request path
+- [x] 9.11 Verify: run `npm test` in `service-a/` — all tests pass and coverage thresholds met
 - [ ] 9.12 Verify: start server locally (`NODE_ENV=test npm run dev`), call `GET /api/v1/movies/:movie_id` with a valid movie ID, confirm SQS message appears in the queue via `aws sqs receive-message --queue-url <URL> --max-number-of-messages 1`
-- [ ] 9.13 Verify: call `GET /metrics` and confirm `totalPublished` increments after each movie request
+- [x] 9.13 Verify: call `GET /metrics` and confirm `totalPublished` increments after each movie request
 
 **Validates:** Requirements 1.1–1.5, 13.4
 
@@ -188,28 +197,38 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 ### Task 10: Event Processor — Lambda Implementation
 
-- [ ] 10.1 Create `event-processor/src/handler.js` — main Lambda handler:
-  - Runs idempotency checks for all events first (before any aggregation)
-  - Aggregates view counts by `movieId` across non-duplicate events
-  - One `UpdateItem` per `movieId` with `ADD viewCount :delta`
-  - One `PutItem` per non-duplicate event to `RecentActivity` with `pk = "ACTIVITY#<YYYY-MM-DD>"`
-  - Sends ONE `POST /internal/notify` per batch with `{ updates: [{ movieId, delta, publishedAt }] }` + `X-Internal-Secret` header
-  - Uses `ReportBatchItemFailures` for failed items
-- [ ] 10.2 Create `event-processor/src/lib/idempotency.js`: conditional `PutItem` on `ProcessedEvents`; returns `true` if new, `false` if duplicate
-- [ ] 10.3 Create `event-processor/src/lib/statsWriter.js`: `UpdateItem` with `ADD viewCount :delta SET pk = :pk, lastViewedAt = :ts, updatedAt = :now, title = :title`
-- [ ] 10.4 Create `event-processor/src/lib/recentActivityWriter.js`: `PutItem` to `RecentActivity` with day-scoped `pk`
-- [ ] 10.5 Create `event-processor/src/lib/gatewayNotifier.js`: POST to gateway; on failure logs `WARN`, does NOT throw
-- [ ] 10.6 Create `event-processor/src/lib/metrics.js`: publishes `BatchProcessingDuration`, `DuplicatesSkipped`, `DynamoWriteErrors` to CloudWatch namespace `AnalyticsDashboard`
-- [ ] 10.7 Write unit tests: idempotency check, aggregation logic, batch failure reporting, gateway notify failure is non-fatal
-- [ ] 10.8 Write property-based tests P1 (Counter Invariant), P2 (Idempotency), P3 (Movie Isolation), P6 (Invalid Input Rejection); tag each `// Feature: realtime-analytics-dashboard, Property N: <name>`; minimum 100 iterations each
-- [ ] 10.9 Create `event-processor/package.json` with dependencies: `@aws-sdk/client-dynamodb`, `@aws-sdk/lib-dynamodb`, `@aws-sdk/client-cloudwatch`; devDependencies: `jest`, `fast-check`
-- [ ] 10.10 Create `event-processor/.env.example` documenting: `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_EVENTS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `GATEWAY_INTERNAL_URL`, `INTERNAL_SECRET`, `AWS_REGION`, `SQS_BATCH_SIZE`
-- [ ] 10.11 Configure CDK `NodejsFunction` construct (or equivalent) to bundle and deploy Lambda code automatically on `cdk deploy`; alternatively create `event-processor/deploy.sh` that zips `src/` + `node_modules/` and runs `aws lambda update-function-code --function-name event-processor --zip-file fileb://function.zip`
-- [ ] 10.12 Logging: ensure Lambda logs at `INFO` level for each batch — batch size received, number of duplicates skipped, number of unique movieIds aggregated, gateway notify success/failure; log at `ERROR` for DynamoDB write failures with `requestId` and `movieId`; log at `WARN` for gateway POST failure with status code
-- [ ] 10.13 Verify: run `npm test` in `event-processor/` — all tests pass
-- [ ] 10.14 Verify: manually invoke Lambda via AWS Console with a test SQS event payload (`{ "Records": [{ "body": "{\"schemaVersion\":\"1.0\",\"requestId\":\"test-uuid\",\"movieId\":\"tt0111161\",\"title\":\"Test\",\"publishedAt\":1234567890}" }] }`); confirm `MovieStats` item created/incremented in DynamoDB console
-- [ ] 10.15 Verify: send the same event twice (same `requestId`); confirm `viewCount` only incremented once — idempotency working
-- [ ] 10.16 Verify: check `ProcessedEvents` table has item with correct `requestId` and `ttl` ~24h from now; check `RecentActivity` table has item with `pk = "ACTIVITY#<today>"`
+> **Gateway contract (current `httpServer.js`):** The gateway's `/internal/notify` endpoint expects one POST per movieId with body `{ movieId: string, viewCount: number, publishedAt: string (ISO 8601) }`. No `X-Internal-Secret` header is checked. The Lambda must send one POST per unique movieId after aggregating the batch — not a single batched payload.
+
+- [x] 10.1 Create `event-processor/src/handler.js` — main Lambda handler:
+  - Parse each SQS record body as JSON (`schemaVersion`, `requestId`, `movieId`, `title`, `publishedAt` epoch ms)
+  - Run idempotency check for each event before any writes (skip duplicates)
+  - Aggregate view counts by `movieId` across non-duplicate events (e.g. 3 events for movie A + 2 for movie B → `{ "movieA": 3, "movieB": 2 }`)
+  - One `UpdateItem` per unique `movieId` on `MovieStats`: `ADD viewCount :delta SET pk = :pk, lastViewedAt = :ts, updatedAt = :now, title = :title`
+  - One `PutItem` per non-duplicate event to `RecentActivity`: `pk = "ACTIVITY#<YYYY-MM-DD>"`, `viewedAt = publishedAt`, `movieId`, `title`, `ttl = Math.floor(Date.now()/1000) + 86400`
+  - After all DynamoDB writes, send one `POST /internal/notify` per unique `movieId` to the gateway with body `{ movieId, viewCount: delta, publishedAt: new Date(publishedAt).toISOString() }` — `publishedAt` converted from epoch ms to ISO string to match the gateway's current validation (`typeof publishedAt !== 'string'`)
+  - Uses `ReportBatchItemFailures`: collect `itemIdentifier` for any record that throws; return `{ batchItemFailures: [...] }`
+- [ ] 10.2 Create `event-processor/src/lib/idempotency.js`: conditional `PutItem` on `ProcessedEvents` table with `attribute_not_exists(requestId)`; returns `true` if new (item written), `false` if duplicate (condition failed); sets `ttl = Math.floor(Date.now()/1000) + 86400`
+- [x] 10.3 Create `event-processor/src/lib/statsWriter.js`: accepts `{ movieId, title, delta, lastViewedAt }`; runs `UpdateItem` with expression `ADD viewCount :delta SET pk = :pk, lastViewedAt = :ts, updatedAt = :now, title = :title`; `:pk = "STATS"` (required for the GSI `viewCount-index` that `statsQuery.js` queries with `pk = "STATS"`)
+- [x] 10.4 Create `event-processor/src/lib/recentActivityWriter.js`: accepts a single event `{ movieId, title, publishedAt (epoch ms) }`; derives UTC date string `YYYY-MM-DD` from `publishedAt`; runs `PutItem` to `RecentActivity` with `pk = "ACTIVITY#<date>"`, `viewedAt = publishedAt`, `movieId`, `title`, `ttl`
+- [x] 10.5 Create `event-processor/src/lib/gatewayNotifier.js`: accepts `{ movieId, viewCount, publishedAt (ISO string) }`; POSTs to `process.env.GATEWAY_INTERNAL_URL + "/internal/notify"` with `Content-Type: application/json`; on non-2xx or network error logs `WARN` with status code and movieId, does NOT throw (gateway notify is best-effort)
+- [x] 10.6 Create `event-processor/src/lib/metrics.js`: publishes `BatchProcessingDuration` (ms), `DuplicatesSkipped` (count), `DynamoWriteErrors` (count) to CloudWatch namespace `AnalyticsDashboard` via `PutMetricData`; called once per handler invocation after all processing
+- [x] 10.7 Write unit tests in `event-processor/src/__tests__/`:
+  - `idempotency.test.js`: mock DynamoDB — first call returns success (new), second call throws `ConditionalCheckFailedException` (duplicate); assert return values
+  - `handler.test.js`: mock all lib modules — assert aggregation produces correct `delta` per movieId; assert `statsWriter` called once per unique movieId; assert `recentActivityWriter` called once per non-duplicate event; assert `gatewayNotifier` called once per unique movieId with correct `{ movieId, viewCount: delta, publishedAt: ISO string }`; assert failed record appears in `batchItemFailures`
+  - `gatewayNotifier.test.js`: mock `fetch` — assert non-2xx response logs WARN and does not throw; assert network error logs WARN and does not throw
+- [x] 10.8 Write property-based tests in `event-processor/src/__tests__/properties.test.js`; tag each with `// Feature: realtime-analytics-dashboard, Property N: <name>`; minimum 100 iterations each:
+  - P1 (Counter Invariant): generate N events for the same movieId; assert `statsWriter` is called with `delta = N`
+  - P2 (Idempotency): generate a batch where some `requestId`s repeat; assert `viewCount` increments only for unique `requestId`s
+  - P3 (Movie Isolation): generate events for multiple distinct movieIds; assert each movieId's delta is independent and correct
+  - P6 (Invalid Input Rejection): generate records with missing/malformed `movieId` or `requestId`; assert they appear in `batchItemFailures` and do not affect other records
+- [x] 10.9 Update `event-processor/package.json` — add dependencies: `@aws-sdk/client-dynamodb`, `@aws-sdk/lib-dynamodb`, `@aws-sdk/client-cloudwatch`; devDependencies: `jest`, `fast-check`; add `"test": "jest"` script
+- [x] 10.10 Create `event-processor/.env.example` documenting all required env vars: `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_EVENTS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `GATEWAY_INTERNAL_URL` (e.g. `http://wsg.local:8081`), `AWS_REGION`, `SQS_BATCH_SIZE`
+- [x] 10.11 Create `event-processor/deploy.sh`: zips `src/` + `node_modules/` into `function.zip` and runs `aws lambda update-function-code --function-name event-processor --zip-file fileb://function.zip --profile pers --region us-east-1`
+- [x] 10.12 Logging: `INFO` per batch — batch size received, duplicates skipped, unique movieIds aggregated; `INFO` per gateway notify — movieId, response status; `ERROR` for DynamoDB write failures — include `requestId` and `movieId`; `WARN` for gateway POST failure — include status code and movieId
+- [x] 10.13 Verify: run `npm test` in `event-processor/` — all tests pass
+- [ ] 10.14 Verify: manually invoke Lambda via AWS Console with test payload `{ "Records": [{ "messageId": "msg-1", "body": "{\"schemaVersion\":\"1.0\",\"requestId\":\"test-uuid-1\",\"movieId\":\"tt0111161\",\"title\":\"The Shawshank Redemption\",\"publishedAt\":1700000000000}" }] }`; confirm `MovieStats` item has `viewCount` incremented and `pk = "STATS"` in DynamoDB console
+- [ ] 10.15 Verify: invoke Lambda twice with the same `requestId`; confirm `viewCount` incremented only once (idempotency); confirm `ProcessedEvents` has one item for that `requestId`
+- [ ] 10.16 Verify: check `RecentActivity` table has item with `pk = "ACTIVITY#<today>"`, correct `movieId`, `title`, and `ttl` ~24h from now; check gateway CloudWatch Logs show the notify POST was received (or check `wscat` client receives `stats_update`)
 
 **Validates:** Requirements 3, 4, 9.1, 9.2, 11
 
@@ -217,28 +236,36 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 ### Task 11: WebSocket Gateway — Main Server
 
-- [ ] 11.1 Fix `statsQuery.js`: add `title` to the returned item mapping
-- [ ] 11.2 Create `websocket-gateway/src/recentActivityQuery.js`: query `RecentActivity` with `pk = "ACTIVITY#<today>"`, `ScanIndexForward: false`, `Limit: 20`
-- [ ] 11.3 Create `websocket-gateway/src/cloudwatchPoller.js`: polls `GetMetricData` every `CLOUDWATCH_POLL_INTERVAL_MS` (5s); maintains rolling 1-hour buffer (720 data points); exposes `getLatest()` and `getHistory()`
-- [ ] 11.4 Create `websocket-gateway/src/latencyTracker.js`: maintains rolling 60s window of `latencyMs` samples; computes p50/p95/p99; flushes to CloudWatch via `PutMetricData` every `CLOUDWATCH_METRICS_FLUSH_INTERVAL_MS` (30s)
-- [ ] 11.5 Create `websocket-gateway/src/wsServer.js`:
-  - On connect: validate Cognito JWT; send `initial_state` with top-10, recentActivity, `systemMetrics.history`; broadcast updated `connectedClients`
-  - On close/error: remove client; broadcast updated `connectedClients`
-  - Ping/pong keepalive every 30s; remove non-responding clients
-- [ ] 11.6 Create `websocket-gateway/src/httpServer.js`:
-  - `GET /health`: returns `{ status, connectedClients, backpressureActive }`
-  - `POST /internal/notify` (port 8081): validates `X-Internal-Secret`; receives `{ updates: [...] }`; computes latency; serves from cache; broadcasts `stats_update` with `systemMetrics`
-- [ ] 11.7 Create `websocket-gateway/src/index.js`: starts WS server (port 8080) and HTTP server (port 8081); starts CloudWatch poller and latency flush timer on startup
-- [ ] 11.8 Write unit tests: connection lifecycle (mock ws), backpressure activation/deactivation, notify handler validates `X-Internal-Secret`, ping/pong cleanup removes non-responding clients, DynamoDB cache serves stale-while-revalidate
-- [ ] 11.9 Write property-based tests P5 (Monotonically Non-Decreasing) and P7 (Backpressure Coalescing); tags `// Feature: realtime-analytics-dashboard, Property 5/7: ...`; minimum 100 iterations each
-- [ ] 11.10 Create `websocket-gateway/.env.example` documenting: `DYNAMODB_TABLE_STATS`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `AWS_REGION`, `PORT`, `INTERNAL_PORT`, `COGNITO_JWKS_URL`, `INTERNAL_SECRET`, `CLOUDWATCH_POLL_INTERVAL_MS`, `CLOUDWATCH_METRICS_FLUSH_INTERVAL_MS`
-- [ ] 11.11 Create `websocket-gateway/Dockerfile`: multi-stage build, non-root user, exposes ports 8080 and 8081
-- [ ] 11.12 Logging: ensure WSG logs at `INFO` on client connect/disconnect (with client count), `INFO` on each `/internal/notify` received (batch size, latencyMs computed), `INFO` on each broadcast (connectedClients count), `WARN` when latency > 2000ms, `WARN` when backpressure activates/deactivates, `ERROR` on DynamoDB query failure, `WARN` on JWT rejection with reason
-- [ ] 11.13 Verify: run `npm test` in `websocket-gateway/` — all tests pass
-- [ ] 11.14 Verify: start WSG locally (`node src/index.js`), call `GET /health` — returns `{ status: "ok", connectedClients: 0, backpressureActive: false }`
-- [ ] 11.15 Verify: connect a WebSocket client (e.g. `wscat -c ws://localhost:8080/ws`) — `initial_state` message received with `top10` and `recentActivity` arrays
-- [ ] 11.16 Verify: POST to `http://localhost:8081/internal/notify` with `X-Internal-Secret` header and test payload — connected WebSocket client receives `stats_update` within 500ms
-- [ ] 11.17 Verify: POST to `/internal/notify` without `X-Internal-Secret` header — returns HTTP 403
+> **Context:** The teammate has already implemented the core gateway skeleton (`wsServer.js`, `httpServer.js`, `connectionManager.js`, `backpressure.js`, `statsQuery.js`, `index.js`, `Dockerfile`). The backpressure logic and basic notify→broadcast loop are done. Tasks below are additions and fixes on top of that existing code.
+
+> **Payload contract:** The Lambda sends `{ updates: [{ movieId, delta, publishedAt }] }` (array). The current `httpServer.js` expects a flat single-object payload. This must be aligned — see 11.2.
+
+- [ ] 11.1 Fix `statsQuery.js`: add `title` to the returned item mapping (currently missing)
+- [ ] 11.2 Fix `httpServer.js` — align `/internal/notify` payload with Lambda contract:
+  - Change expected body from `{ movieId, viewCount, publishedAt }` to `{ updates: [{ movieId, delta, publishedAt }] }`
+  - Validate that `updates` is a non-empty array; return 400 otherwise
+  - Use `publishedAt` from the first update entry for latency logging
+  - Pass the full `updates` array through to the broadcast payload
+- [ ] 11.3 Fix `httpServer.js` — add `X-Internal-Secret` header validation: read secret from `process.env.INTERNAL_SECRET`; return HTTP 403 if header is missing or does not match
+- [ ] 11.4 Fix `wsServer.js` — add `recentActivity` to `initial_state`:
+  - Import and call `recentActivityQuery` on connect alongside `queryTop10`
+  - Include `recentActivity` array in the `initial_state` message
+- [ ] 11.5 Create `websocket-gateway/src/recentActivityQuery.js`: query `RecentActivity` table with `pk = "ACTIVITY#<today>"`, `ScanIndexForward: false`, `Limit: 20`; return array of `{ movieId, title, viewedAt }`
+- [ ] 11.6 Fix `httpServer.js` — include `recentActivity` in `stats_update` broadcast: call `recentActivityQuery` alongside `queryTop10` on each `/internal/notify`; include result in the broadcast payload
+- [ ] 11.7 Create `websocket-gateway/src/cloudwatchPoller.js`: polls `GetMetricData` every `CLOUDWATCH_POLL_INTERVAL_MS` (default 5000ms); fetches Lambda invocations/errors/duration, SQS queue depth (`ApproximateNumberOfMessagesVisible` on `view-events`), ECS CPU% and memory% for the WSG task; maintains a rolling 1-hour in-memory buffer (max 720 data points at 5s granularity); exposes `getLatest()` → single object and `getHistory()` → array
+- [ ] 11.8 Wire `cloudwatchPoller` into `index.js`: start polling on startup; attach `getLatest()` result as `systemMetrics` on every `stats_update` broadcast; include `getHistory()` in `initial_state` as `systemMetrics.history`
+- [ ] 11.9 Add `CLOUDWATCH_POLL_INTERVAL_MS` to `.env.example` (default 5000)
+- [ ] 11.10* (TODO — bonus) Create `websocket-gateway/src/latencyTracker.js`: maintains rolling 60s window of `latencyMs` samples; computes p50/p95/p99 server-side; flushes to CloudWatch via `PutMetricData` every 30s as `EndToEndLatencyP50/P95/P99` under `AnalyticsDashboard` namespace; exposes `record(latencyMs)` and `getPercentiles()`
+- [ ] 11.11* (TODO — bonus) Wire `latencyTracker` into `httpServer.js`: call `latencyTracker.record(latencyMs)` on each `/internal/notify`; attach `latencyTracker.getPercentiles()` into `systemMetrics.gateway` on each broadcast
+- [ ] 11.12 Add ping/pong keepalive to `wsServer.js`: every 30s send a ping frame to all connected clients; remove clients that have not responded with a pong since the last ping interval
+- [ ] 11.13 Update `websocket-gateway/.env.example`: add `INTERNAL_SECRET`, `COGNITO_JWKS_URL`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `CLOUDWATCH_POLL_INTERVAL_MS`
+- [ ] 11.14 Write unit tests: notify handler rejects missing/wrong `X-Internal-Secret` (403), notify handler rejects invalid `updates` array (400), backpressure activation/deactivation (already implemented — add regression tests), ping/pong cleanup removes non-responding clients, CloudWatch poller `getLatest()` returns most recent data point
+- [ ] 11.15 Write property-based tests P5 (Monotonically Non-Decreasing) and P7 (Backpressure Coalescing); tag `// Feature: realtime-analytics-dashboard, Property 5/7: ...`; minimum 100 iterations each
+- [ ] 11.16 Logging: `INFO` on client connect/disconnect (with count), `INFO` on each `/internal/notify` (updates count, latencyMs), `INFO` on each broadcast (connectedClients), `WARN` when latency > 2000ms, `WARN` on backpressure activate/deactivate, `ERROR` on DynamoDB query failure, `WARN` on JWT rejection
+- [ ] 11.17 Verify: `GET /health` returns `{ status: "ok", connectedClients: 0, backpressureActive: false }`
+- [ ] 11.18 Verify: connect WebSocket client — `initial_state` received with `top10`, `recentActivity`, and `systemMetrics.history` arrays
+- [ ] 11.19 Verify: POST to `http://localhost:8081/internal/notify` with correct `X-Internal-Secret` and `{ updates: [{ movieId: "tt0111161", delta: 1, publishedAt: <epoch ms> }] }` — connected client receives `stats_update` within 500ms
+- [ ] 11.20 Verify: POST to `/internal/notify` without `X-Internal-Secret` — returns HTTP 403
 
 **Validates:** Requirements 5, 7, 9.2, 12, 13.5, 15
 
