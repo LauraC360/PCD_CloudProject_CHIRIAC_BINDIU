@@ -75,12 +75,14 @@ function createBackpressure(broadcastFn) {
   function activate() {
     active = true;
     consecutiveQuietSeconds = 0;
+    console.warn(`[backpressure] WARN: backpressure ACTIVATED windowCount=${windowCount} threshold=${RATE_THRESHOLD}`);
 
     if (pushTimer === null) {
       pushTimer = setInterval(() => {
         if (pendingUpdate !== null) {
           const update = pendingUpdate;
           pendingUpdate = null;
+          console.info(`[backpressure] INFO: flushing coalesced update`);
           broadcastFn(update);
         }
       }, PUSH_INTERVAL_MS);
@@ -91,6 +93,7 @@ function createBackpressure(broadcastFn) {
   function deactivate() {
     active = false;
     consecutiveQuietSeconds = 0;
+    console.warn(`[backpressure] WARN: backpressure DEACTIVATED after ${DEACTIVATION_WINDOW} quiet seconds`);
 
     if (pushTimer !== null) {
       clearInterval(pushTimer);
@@ -101,6 +104,7 @@ function createBackpressure(broadcastFn) {
     if (pendingUpdate !== null) {
       const update = pendingUpdate;
       pendingUpdate = null;
+      console.info(`[backpressure] INFO: flushing pending update on deactivation`);
       broadcastFn(update);
     }
   }

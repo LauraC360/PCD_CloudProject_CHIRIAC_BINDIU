@@ -130,15 +130,25 @@
 
     switch (msg.type) {
       case 'initial_state':
+        console.info('[app.js] INFO: initial_state received connectedClients=' + msg.connectedClients);
         handleInitialState(msg);
         break;
 
       case 'stats_update':
+        console.info('[app.js] INFO: stats_update received connectedClients=' + msg.connectedClients);
         handleStatsUpdate(msg);
         break;
 
+      case 'connected_clients_update':
+        // Only updates the connected users counter — does NOT touch top10 or activity feed
+        console.info('[app.js] INFO: connected_clients_update received connectedClients=' + msg.connectedClients);
+        if (typeof window.dashboard?.renderConnectedClients === 'function') {
+          window.dashboard.renderConnectedClients(msg.connectedClients);
+        }
+        break;
+
       default:
-        console.warn('[app.js] Unknown message type:', msg.type);
+        console.warn('[app.js] WARN: unknown message type:', msg.type);
     }
   }
 

@@ -11,6 +11,8 @@ const docClient = DynamoDBDocumentClient.from(dynamoClient);
 
 // Queries the MovieStats GSI (viewCount-index) for the top 10 movies
 async function queryTop10() {
+  console.info(`[statsQuery] INFO: querying top10 table=${tableName} index=viewCount-index`);
+
   const command = new QueryCommand({
     TableName: tableName,
     IndexName: 'viewCount-index',
@@ -22,14 +24,20 @@ async function queryTop10() {
     Limit: 10,
   });
 
-  const response = await docClient.send(command);
-
-  return (response.Items || []).map((item) => ({
-    movieId: item.movieId,
-    title: item.title,
-    viewCount: item.viewCount,
-    lastViewedAt: item.lastViewedAt,
-  }));
+  try {
+    const response = await docClient.send(command);
+    const items = (response.Items || []).map((item) => ({
+      movieId: item.movieId,
+      title: item.title,
+      viewCount: item.viewCount,
+      lastViewedAt: item.lastViewedAt,
+    }));
+    console.info(`[statsQuery] INFO: top10 query ok count=${items.length} top=${items[0]?.movieId ?? 'none'}`);
+    return items;
+  } catch (err) {
+    console.error(`[statsQuery] ERROR: query failed table=${tableName} errorName=${err.name} message=${err.message}`);
+    throw err;
+  }
 }
 
 module.exports = { queryTop10 };

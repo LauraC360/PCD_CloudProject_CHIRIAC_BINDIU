@@ -26,6 +26,7 @@
   "dependencies": {
     "@aws-sdk/client-cloudwatch": "^3.1037.0",
     "@aws-sdk/client-sqs": "3.1037.0",
+    "@aws-sdk/client-ssm": "^3.1037.0",
     "@fastify/autoload": "^6.3.1",
     "@fastify/caching": "^9.0.3",
     "@fastify/env": "^5.0.3",

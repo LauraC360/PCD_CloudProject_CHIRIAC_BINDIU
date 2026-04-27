@@ -28,7 +28,12 @@ const routes: RouteOptions[] = [
     schema: { ...FetchMovieSchema, tags: [...tags, RouteTags.CACHE] },
     handler: async function fetchMovie(request, reply) {
       const params = request.params as MovieIdObjectSchemaType;
+
+      request.log.info({ movieId: params.movie_id }, 'fetchMovie: request received');
+
       const movie = (await this.dataStore.fetchMovie(params.movie_id)) as MovieSchemaType;
+
+      request.log.info({ movieId: params.movie_id, title: movie.title }, 'fetchMovie: movie fetched from dataStore');
 
       // CloudWatch: record one GetMovieInvocations count per entry (after successful fetch).
       this.cwMetrics?.recordInvocation();
@@ -39,9 +44,19 @@ const routes: RouteOptions[] = [
       const parsedRequestedAt = requestedAtHeader !== undefined ? Number(requestedAtHeader) : NaN;
       const publishedAt = Number.isFinite(parsedRequestedAt) ? parsedRequestedAt : Date.now();
 
+      if (!Number.isFinite(parsedRequestedAt)) {
+        request.log.warn({ movieId: params.movie_id }, 'fetchMovie: x-requested-at header missing or invalid — falling back to Date.now()');
+      }
+
+      const requestId = crypto.randomUUID();
+      request.log.info(
+        { movieId: params.movie_id, requestId, publishedAt, title: movie.title },
+        'fetchMovie: firing SQS publish'
+      );
+
       this.sqsPublisher.publish({
         schemaVersion: '1.0',
-        requestId: crypto.randomUUID(),
+        requestId,
         movieId: params.movie_id,
         title: movie.title,
         publishedAt

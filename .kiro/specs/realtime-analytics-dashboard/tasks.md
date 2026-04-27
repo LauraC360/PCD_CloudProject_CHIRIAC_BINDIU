@@ -207,7 +207,7 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
   - One `PutItem` per non-duplicate event to `RecentActivity`: `pk = "ACTIVITY#<YYYY-MM-DD>"`, `viewedAt = publishedAt`, `movieId`, `title`, `ttl = Math.floor(Date.now()/1000) + 86400`
   - After all DynamoDB writes, send one `POST /internal/notify` per unique `movieId` to the gateway with body `{ movieId, viewCount: delta, publishedAt: new Date(publishedAt).toISOString() }` — `publishedAt` converted from epoch ms to ISO string to match the gateway's current validation (`typeof publishedAt !== 'string'`)
   - Uses `ReportBatchItemFailures`: collect `itemIdentifier` for any record that throws; return `{ batchItemFailures: [...] }`
-- [ ] 10.2 Create `event-processor/src/lib/idempotency.js`: conditional `PutItem` on `ProcessedEvents` table with `attribute_not_exists(requestId)`; returns `true` if new (item written), `false` if duplicate (condition failed); sets `ttl = Math.floor(Date.now()/1000) + 86400`
+- [x] 10.2 Create `event-processor/src/lib/idempotency.js`: conditional `PutItem` on `ProcessedEvents` table with `attribute_not_exists(requestId)`; returns `true` if new (item written), `false` if duplicate (condition failed); sets `ttl = Math.floor(Date.now()/1000) + 86400`
 - [x] 10.3 Create `event-processor/src/lib/statsWriter.js`: accepts `{ movieId, title, delta, lastViewedAt }`; runs `UpdateItem` with expression `ADD viewCount :delta SET pk = :pk, lastViewedAt = :ts, updatedAt = :now, title = :title`; `:pk = "STATS"` (required for the GSI `viewCount-index` that `statsQuery.js` queries with `pk = "STATS"`)
 - [x] 10.4 Create `event-processor/src/lib/recentActivityWriter.js`: accepts a single event `{ movieId, title, publishedAt (epoch ms) }`; derives UTC date string `YYYY-MM-DD` from `publishedAt`; runs `PutItem` to `RecentActivity` with `pk = "ACTIVITY#<date>"`, `viewedAt = publishedAt`, `movieId`, `title`, `ttl`
 - [x] 10.5 Create `event-processor/src/lib/gatewayNotifier.js`: accepts `{ movieId, viewCount, publishedAt (ISO string) }`; POSTs to `process.env.GATEWAY_INTERNAL_URL + "/internal/notify"` with `Content-Type: application/json`; on non-2xx or network error logs `WARN` with status code and movieId, does NOT throw (gateway notify is best-effort)
@@ -240,7 +240,7 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 > **Payload contract:** The Lambda sends `{ updates: [{ movieId, delta, publishedAt }] }` (array). The current `httpServer.js` expects a flat single-object payload. This must be aligned — see 11.2.
 
-- [ ] 11.1 Fix `statsQuery.js`: add `title` to the returned item mapping (currently missing)
+- [x] 11.1 Fix `statsQuery.js`: add `title` to the returned item mapping (currently missing)
 - [ ] 11.2 Fix `httpServer.js` — align `/internal/notify` payload with Lambda contract:
   - Change expected body from `{ movieId, viewCount, publishedAt }` to `{ updates: [{ movieId, delta, publishedAt }] }`
   - Validate that `updates` is a non-empty array; return 400 otherwise
@@ -261,7 +261,7 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 - [ ] 11.13 Update `websocket-gateway/.env.example`: add `INTERNAL_SECRET`, `COGNITO_JWKS_URL`, `DYNAMODB_TABLE_RECENT_ACTIVITY`, `CLOUDWATCH_POLL_INTERVAL_MS`
 - [ ] 11.14 Write unit tests: notify handler rejects missing/wrong `X-Internal-Secret` (403), notify handler rejects invalid `updates` array (400), backpressure activation/deactivation (already implemented — add regression tests), ping/pong cleanup removes non-responding clients, CloudWatch poller `getLatest()` returns most recent data point
 - [ ] 11.15 Write property-based tests P5 (Monotonically Non-Decreasing) and P7 (Backpressure Coalescing); tag `// Feature: realtime-analytics-dashboard, Property 5/7: ...`; minimum 100 iterations each
-- [ ] 11.16 Logging: `INFO` on client connect/disconnect (with count), `INFO` on each `/internal/notify` (updates count, latencyMs), `INFO` on each broadcast (connectedClients), `WARN` when latency > 2000ms, `WARN` on backpressure activate/deactivate, `ERROR` on DynamoDB query failure, `WARN` on JWT rejection
+- [x] 11.16 Logging: `INFO` on client connect/disconnect (with count), `INFO` on each `/internal/notify` (updates count, latencyMs), `INFO` on each broadcast (connectedClients), `WARN` when latency > 2000ms, `WARN` on backpressure activate/deactivate, `ERROR` on DynamoDB query failure, `WARN` on JWT rejection
 - [ ] 11.17 Verify: `GET /health` returns `{ status: "ok", connectedClients: 0, backpressureActive: false }`
 - [ ] 11.18 Verify: connect WebSocket client — `initial_state` received with `top10`, `recentActivity`, and `systemMetrics.history` arrays
 - [ ] 11.19 Verify: POST to `http://localhost:8081/internal/notify` with correct `X-Internal-Secret` and `{ updates: [{ movieId: "tt0111161", delta: 1, publishedAt: <epoch ms> }] }` — connected client receives `stats_update` within 500ms
@@ -273,14 +273,16 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 
 ### Task 12: Frontend — Dashboard
 
-- [ ] 12.1 Update `frontend/index.html` (file already exists in repo): add Cognito hosted UI redirect on load; store JWT in memory after login; add Chart.js and Tailwind CSS CDN links if not already present
-- [ ] 12.2 Create `frontend/app.js`: WebSocket client connecting to `wss://<GATEWAY_HOST>/ws` with JWT as query param; dispatches messages; exponential backoff reconnection (1s start, ×2, cap 30s, max 10 attempts)
-- [ ] 12.3 Create `frontend/dashboard.js`: renders top-10 list, recent activity feed, connected users count from `stats_update` and `initial_state`
-- [ ] 12.4 Create `frontend/charts.js`: renders all Chart.js charts from `systemMetrics` data — latency p50/p95/p99 (from `systemMetrics.gateway.latencyP50/P95/P99`), throughput, Lambda metrics, SQS depth, ECS CPU/memory; appends data points to local history arrays; no client-side calculations
+- [x] 12.1 Update `frontend/index.html` (file already exists in repo): add Cognito hosted UI redirect on load; store JWT in memory after login; add Chart.js and Tailwind CSS CDN links if not already present
+  > ⚠️ Chart.js + Tailwind CDN done. Cognito redirect not yet implemented — pending Task 12.5.
+- [x] 12.2 Create `frontend/app.js`: WebSocket client connecting to `wss://<GATEWAY_HOST>/ws` with JWT as query param; dispatches messages; exponential backoff reconnection (1s start, ×2, cap 30s, max 10 attempts)
+- [x] 12.3 Create `frontend/dashboard.js`: renders top-10 list, recent activity feed, connected users count from `stats_update` and `initial_state`
+- [x] 12.4 Create `frontend/charts.js`: renders all Chart.js charts from `systemMetrics` data — latency p50/p95/p99 (from `systemMetrics.gateway.latencyP50/P95/P99`), throughput, Lambda metrics, SQS depth, ECS CPU/memory; appends data points to local history arrays; no client-side calculations
+  > ⚠️ Implemented as `latencyChart.js` (60s sliding window, p50/p95/p99 client-side). Full `systemMetrics` charts pending Task 11.7/11.8 (CloudWatch poller not yet built).
 - [ ] 12.5 Wire Cognito JWT as `Authorization: Bearer` header on all `GET /movies/:id` HTTP requests
 - [ ] 12.6 Write unit tests for `dashboard.js`: activity feed keeps max 20 items; top-10 renders correct rows sorted by `viewCount` descending; reconnection backoff timing
 - [ ] 12.7 Upload to S3: `aws s3 sync ./frontend s3://<BUCKET_NAME>/ --delete`
-- [ ] 12.8 Logging: ensure frontend logs to browser console — `INFO` on WebSocket connect/disconnect, `INFO` on each `initial_state` and `stats_update` received (with `ts`), `WARN` on reconnection attempt (with attempt number and backoff delay), `ERROR` after 10 failed reconnection attempts
+- [x] 12.8 Logging: ensure frontend logs to browser console — `INFO` on WebSocket connect/disconnect, `INFO` on each `initial_state` and `stats_update` received (with `ts`), `WARN` on reconnection attempt (with attempt number and backoff delay), `ERROR` after 10 failed reconnection attempts
 - [ ] 12.9 Verify: open dashboard in browser — Cognito login redirect works; after login, WebSocket connects and `initial_state` renders top-10 list and activity feed
 - [ ] 12.10 Verify: trigger a `GET /movies/:id` request (via browser or curl with JWT), confirm `stats_update` updates the dashboard UI within 500ms
 - [ ] 12.11 Verify: disconnect from network briefly — dashboard shows "Reconnecting..." indicator; reconnect — dashboard reconnects and re-renders
@@ -322,3 +324,71 @@ Complete CDK foundation tasks first — they produce the resource ARNs and URLs 
 - [ ] 14.6 Run `cdk destroy` after presentation to tear down all resources
 
 **Validates:** Requirements 10.5, 14.4
+
+---
+
+## Pending Notes — Design Gaps & Known Issues
+
+> These are not tasks yet — they are tracked here for awareness before Task 11 and Task 12 work begins.
+
+### Design gaps (current code diverges from design.md — not yet broken, but incomplete)
+
+**A. Lambda → Gateway notify contract**
+- Design: one POST per batch, body `{ updates: [{ movieId, delta, publishedAt (epoch ms) }] }`, with `X-Internal-Secret` header
+- Current: one POST per unique movieId, body `{ movieId, viewCount, publishedAt (ISO string) }`, no secret header
+- Impact: multiple broadcasts per SQS batch instead of one consolidated update; no security on `/internal/notify`
+- Fix: align when Task 11.2 and 11.3 are implemented (gateway side), then update `gatewayNotifier.js` to match
+
+**B. `stats_update` payload missing fields**
+- Design: `{ type, ts, connectedClients, top10, recentActivity, systemMetrics }`
+- Current: `{ type, publishedAt, deliveredAt, connectedClients, top10 }`
+- Missing: `ts` (epoch ms delivery stamp), `recentActivity`, `systemMetrics`
+- Fix: Task 11.5, 11.6, 11.7, 11.8
+
+**C. `initial_state` payload missing fields**
+- Design: includes `recentActivity` and `systemMetrics.history`
+- Current: only `top10` and `connectedClients`
+- Fix: Task 11.4, 11.5, 11.8
+
+**D. WebSocket JWT authentication**
+- Design: gateway validates Cognito JWT on connect, rejects with 401 if invalid
+- Current: no JWT validation — any client can connect
+- Fix: Task 11 (not yet numbered — needs `COGNITO_JWKS_URL` env var and `@fastify/jwt` or equivalent)
+
+**E. Ping/pong keepalive**
+- Design: gateway pings all clients every 30s, removes non-responding clients
+- Current: not implemented — stale connections accumulate silently
+- Fix: Task 11.12
+
+**F. CloudWatch metrics pipeline**
+- Design: gateway polls `GetMetricData` every 5s, maintains 1h rolling buffer, attaches to every broadcast
+- Current: not implemented
+- Fix: Task 11.7, 11.8
+
+**G. End-to-end latency percentiles**
+- Design: gateway computes p50/p95/p99 from rolling 60s window, flushes to CloudWatch every 30s
+- Current: gateway computes `latencyMs` and logs WARN if > 2s — no window, no percentiles, no CloudWatch publish
+- Fix: Task 11.10, 11.11 (bonus)
+
+---
+
+### Known bugs in current implemented code
+
+**Bug 1 — FIXED: `stats_update` with empty `top10` on connect/disconnect**
+- `wsServer.js` was broadcasting `{ type: 'stats_update', top10: [] }` on every connect/disconnect
+- This would blank the leaderboard on every user join/leave
+- Fixed: changed to `{ type: 'connected_clients_update' }` — only updates the counter
+- Frontend `app.js` updated to handle the new message type
+
+**Bug 2 — OPEN: `latencyMs` silently becomes `NaN`**
+- In `httpServer.js`: `const latencyMs = Date.parse(deliveredAt) - Date.parse(publishedAt)`
+- If `publishedAt` passes string validation but is not a valid date (e.g. `"abc"`), `Date.parse` returns `NaN`
+- `NaN > 2000` is `false` — no WARN logged, no error
+- `JSON.stringify` converts `NaN` to `null` — client receives `"publishedAt": null` silently
+- Fix: add `if (isNaN(latencyMs)) { console.warn(...); }` check after the calculation
+
+**Bug 3 — LOW RISK: duplicate `batchItemFailures` entries**
+- In `handler.js`, if `writeStats` fails for a movieId, all its messageIds are pushed to `batchItemFailures`
+- If `writeRecentActivity` also fails for the same event, nothing prevents a second push of the same messageId
+- SQS would retry those messages more times than needed, potentially hitting DLQ prematurely
+- Fix: use a `Set` for `batchItemFailures` messageIds before building the return array
