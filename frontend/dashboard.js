@@ -71,10 +71,10 @@
       tdRank.className = 'px-5 py-3 text-blue-600 tabular-nums font-medium';
       tdRank.textContent = String(rank);
 
-      // Movie ID
+      // Title (with movieId as fallback)
       const tdMovieId = document.createElement('td');
       tdMovieId.className = 'px-5 py-3 text-purple-600 font-semibold';
-      tdMovieId.textContent = item.movieId != null ? String(item.movieId) : '—';
+      tdMovieId.textContent = item.title != null ? String(item.title) : (item.movieId != null ? String(item.movieId) : '—');
 
       // Views (formatted with toLocaleString)
       const tdViews = document.createElement('td');
@@ -139,7 +139,9 @@
     const feed = document.getElementById('activity-feed');
     if (!feed) return;
 
-    const { movieId, lastViewedAt } = event || {};
+    const { movieId, title, lastViewedAt, deliveredAt } = event || {};
+    const displayName = title != null ? String(title) : (movieId != null ? String(movieId) : '—');
+    const displayTime = deliveredAt || lastViewedAt;
 
     // Remove placeholder <li> if it is still present
     const items = feed.querySelectorAll('li');
@@ -151,17 +153,17 @@
     const li = document.createElement('li');
     li.className = 'px-5 py-3 text-sm flex items-center justify-between gap-3 bg-purple-50 hover:bg-purple-100 transition-colors';
 
-    // Movie ID (prominent)
+    // Title (with movieId as fallback)
     const movieSpan = document.createElement('span');
     movieSpan.className = 'font-semibold text-blue-600 truncate';
-    movieSpan.textContent = movieId != null ? String(movieId) : '—';
+    movieSpan.textContent = displayName;
 
     // Timestamp
     const timeSpan = document.createElement('span');
     timeSpan.className = 'text-purple-600 text-xs whitespace-nowrap flex-shrink-0';
-    if (lastViewedAt) {
+    if (displayTime) {
       try {
-        timeSpan.textContent = new Date(lastViewedAt).toLocaleTimeString();
+        timeSpan.textContent = new Date(displayTime).toLocaleTimeString();
       } catch (_) {
         timeSpan.textContent = String(lastViewedAt);
       }

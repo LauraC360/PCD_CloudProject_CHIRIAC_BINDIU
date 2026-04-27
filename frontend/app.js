@@ -18,6 +18,42 @@
   let socket          = null;
   let attemptCount    = 0;
   let reconnectTimer  = null;
+  const seenActivityKeys = new Set(); // dedup activity feed entries by "movieId|viewedAt"
+
+  // ── Assignment metrics state ──────────────────────────────────────────────
+
+  /** Timestamps (Date.now()) of events received in the last 60s — for throughput. */
+  const eventTimestamps = [];
+
+  /** Total WebSocket reconnect attempts across the session. */
+  let totalReconnects = 0;
+
+  /** Compute events/min from the last 60s window and update the tile. */
+  function updateThroughput() {
+    const cutoff = Date.now() - 60_000;
+    // prune old entries
+    while (eventTimestamps.length > 0 && eventTimestamps[0] < cutoff) {
+      eventTimestamps.shift();
+    }
+    const el = document.getElementById('throughput-value');
+    if (el) el.textContent = String(eventTimestamps.length);
+  }
+
+  /** Update the consistency window tile with the latest avg latency (ms). */
+  function updateConsistencyWindow(publishedAt, deliveredAt) {
+    if (!publishedAt || !deliveredAt) return;
+    const latencyMs = Date.parse(deliveredAt) - Date.parse(publishedAt);
+    if (isNaN(latencyMs)) return;
+    const el = document.getElementById('consistency-window');
+    if (el) el.textContent = String(Math.round(latencyMs));
+  }
+
+  /** Increment and display the reconnect counter. */
+  function incrementReconnects() {
+    totalReconnects += 1;
+    const el = document.getElementById('ws-reconnects');
+    if (el) el.textContent = String(totalReconnects);
+  }
 
   // update connection status badge
   function setConnectionStatus(state, attempt) {
@@ -86,6 +122,28 @@
       window.dashboard.renderConnectedClients(msg.connectedClients);
     }
 
+    // Clear and repopulate activity feed from initial_state (avoid duplicates on reconnect)
+    if (Array.isArray(msg.recentActivity) && typeof window.dashboard?.renderActivityFeed === 'function') {
+      // Clear existing feed first
+      const feed = document.getElementById('activity-feed');
+      if (feed) {
+        feed.innerHTML = '';
+        seenActivityKeys.clear();
+      }
+      // Reverse so oldest gets prepended first — newest ends up at top
+      msg.recentActivity.slice().reverse().forEach(function(item) {
+        const key = (item.movieId || '') + '|' + (item.viewedAt || '');
+        if (!seenActivityKeys.has(key)) {
+          seenActivityKeys.add(key);
+          window.dashboard.renderActivityFeed({
+            movieId: item.movieId,
+            title: item.title,
+            deliveredAt: item.viewedAt ? new Date(item.viewedAt).toISOString() : msg.deliveredAt
+          });
+        }
+      });
+    }
+
     updateStatTiles(msg);
   }
 
@@ -99,7 +157,23 @@
       window.dashboard.renderConnectedClients(msg.connectedClients);
     }
 
-    if (typeof window.dashboard?.renderActivityFeed === 'function') {
+    // Render recent activity from stats_update (array of {movieId, title, viewedAt})
+    if (Array.isArray(msg.recentActivity) && typeof window.dashboard?.renderActivityFeed === 'function') {
+      // Only show the newest entry (first item, since sorted newest-first), deduplicated
+      if (msg.recentActivity.length > 0) {
+        const item = msg.recentActivity[0];
+        const key = (item.movieId || '') + '|' + (item.viewedAt || '');
+        if (!seenActivityKeys.has(key)) {
+          seenActivityKeys.add(key);
+          window.dashboard.renderActivityFeed({
+            movieId: item.movieId,
+            title: item.title,
+            deliveredAt: item.viewedAt ? new Date(item.viewedAt).toISOString() : msg.deliveredAt
+          });
+        }
+      }
+    } else if (typeof window.dashboard?.renderActivityFeed === 'function') {
+      // Fallback: use top-level movieId/title if no recentActivity array
       window.dashboard.renderActivityFeed(msg);
     }
 
@@ -116,6 +190,11 @@
     }
 
     updateStatTiles(msg);
+
+    // ── Assignment metrics ────────────────────────────────────────────────
+    eventTimestamps.push(Date.now());
+    updateThroughput();
+    updateConsistencyWindow(msg.publishedAt, msg.deliveredAt);
   }
 
   // jsonify message
@@ -175,6 +254,7 @@
     const delay = calcDelay(attemptCount);
     attemptCount += 1;
 
+    incrementReconnects();
     setConnectionStatus('reconnecting', attemptCount);
     console.info(`[app.js] Reconnecting in ${delay}ms (attempt ${attemptCount}/${RECONNECT_MAX_ATTEMPTS})`);
 

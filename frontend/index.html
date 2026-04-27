@@ -13,7 +13,7 @@
 
   <!-- Gateway WebSocket URL — override this value before app.js loads -->
   <script>
-    window.GATEWAY_WS_URL = window.GATEWAY_WS_URL || 'ws://localhost:8080/ws';
+    window.GATEWAY_WS_URL = 'wss://d368d1sswys5zs.cloudfront.net/ws';
   </script>
 </head>
 <body class="bg-white text-slate-700 min-h-screen font-sans antialiased">
@@ -86,6 +86,50 @@
            aria-label="Timestamp of last received update">
           —
         </p>
+      </article>
+    </section>
+
+    <!-- ── Row 1b: Assignment metrics ── -->
+    <section aria-labelledby="metrics-heading" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <h2 id="metrics-heading" class="sr-only">Performance Metrics</h2>
+
+      <!-- Throughput -->
+      <article class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl border border-blue-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-blue-600">
+          Throughput
+        </p>
+        <p id="throughput-value"
+           class="text-4xl font-bold tabular-nums text-purple-600"
+           aria-label="Events per minute in the last 60 seconds">
+          —
+        </p>
+        <p class="text-xs text-blue-500">events / min (60s window)</p>
+      </article>
+
+      <!-- Consistency window -->
+      <article class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl border border-purple-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-purple-600">
+          Consistency Window
+        </p>
+        <p id="consistency-window"
+           class="text-4xl font-bold tabular-nums text-blue-600"
+           aria-label="Average end-to-end latency in milliseconds">
+          —
+        </p>
+        <p class="text-xs text-purple-500">avg ms (publish → dashboard)</p>
+      </article>
+
+      <!-- WebSocket reconnects -->
+      <article class="bg-gradient-to-br from-pink-50 to-pink-100 rounded-xl border border-pink-200 p-5 flex flex-col gap-1 shadow-sm hover:shadow-md transition-shadow">
+        <p class="text-xs font-semibold uppercase tracking-widest text-pink-600">
+          WS Reconnects
+        </p>
+        <p id="ws-reconnects"
+           class="text-4xl font-bold tabular-nums text-pink-700"
+           aria-label="WebSocket reconnection attempts this session">
+          0
+        </p>
+        <p class="text-xs text-pink-500">attempts this session</p>
       </article>
     </section>
 
