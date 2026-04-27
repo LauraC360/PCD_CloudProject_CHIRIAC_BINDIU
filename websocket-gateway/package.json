@@ -1,0 +1,25 @@
+{
+  "name": "websocket-gateway",
+  "version": "1.0.0",
+  "description": "WebSocket Gateway — pushes real-time stats updates to browser clients over WebSocket",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest"
+  },
+  "engines": {
+    "node": ">=22.x"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1037.0",
+    "@aws-sdk/lib-dynamodb": "^3.1037.0",
+    "express": "^4.22.1",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0",
+    "nodemon": "^3.1.10"
+  }
+}

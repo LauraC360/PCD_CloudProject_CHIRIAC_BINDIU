@@ -1,0 +1,23 @@
+# Placeholder image — passes ALB /health check while real gateway is being built.
+# Build and push this first so ECS can start a healthy task during CDK deploy.
+#
+# Usage:
+#   docker build -f Dockerfile.placeholder -t websocket-gateway:placeholder .
+#   docker tag websocket-gateway:placeholder <ecr-uri>/websocket-gateway:latest
+#   docker push <ecr-uri>/websocket-gateway:latest
+
+FROM node:22-alpine
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+WORKDIR /app
+
+COPY placeholder.js ./
+
+RUN chown -R appuser:appgroup /app
+
+USER appuser
+
+EXPOSE 8080
+
+CMD ["node", "placeholder.js"]
