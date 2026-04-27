@@ -17,25 +17,9 @@
 
 ## Project Overview
 
-This scientific report documents the design, implementation, and analysis of the **Realtime Analytics Dashboard**, a cloud-native distributed system built for the PCD (Distributed Cloud Applications) university course. The project demonstrates the application of distributed systems principles to a real-world problem: collecting, processing, and visualizing movie-view events in real time.
+This scientific report documents the design, implementation, and analysis of the **Realtime Analytics Dashboard**, a cloud-native distributed system built for the Concurrent and Distributed Programming Course. The project demonstrates the application of distributed systems principles to a well-known problem: collecting, processing, and visualizing movie-view events in real time.
 
 The system is built on top of the **Fast Lazy Bee** REST API (a movie database service) and extends it with a complete event-driven architecture that captures user interactions, processes them asynchronously through AWS Lambda, persists aggregated statistics in DynamoDB, and delivers live updates to browser clients over WebSocket.
-
----
-
-## Motivation
-
-Modern web applications require real-time data processing and live updates to provide users with current information. Traditional polling-based approaches (where clients repeatedly ask the server for updates) are inefficient and create unnecessary server load. Event-driven architectures, where servers push updates to clients, are more scalable and responsive.
-
-However, building a real-time system that is both responsive and reliable is challenging. It requires careful consideration of:
-
-- **Asynchronous communication**: How to decouple components so failures don't cascade
-- **Consistency**: How to maintain data accuracy when updates are distributed across multiple services
-- **Resilience**: How to recover gracefully when components fail
-- **Performance**: How to handle traffic spikes without degrading user experience
-- **Scalability**: How to grow the system to handle millions of events per day
-
-This project addresses these challenges by implementing industry-standard patterns used by companies like Netflix, Twitter, and Uber. The result is a system that is simple enough to understand and implement in a university project, yet sophisticated enough to demonstrate real-world distributed systems principles.
 
 ---
 
@@ -47,7 +31,7 @@ The primary objectives of this project are:
 - Design and implement a system with **3+ independently deployed components** (Service A, Event Processor, WebSocket Gateway)
 - Use **3+ AWS-native services** (SQS, Lambda, DynamoDB, CloudWatch)
 - Implement **at least one FaaS component** (AWS Lambda)
-- Implement **real-time communication** (WebSocket)
+- Implement **real-time communication** (Webocket)
 
 ### 2. Apply Course Principles
 - Implement **asynchronous communication** between components
@@ -79,13 +63,6 @@ The Realtime Analytics Dashboard captures and visualizes movie-view events in re
 3. **Recent Activity**: The system stores recent views in a separate DynamoDB table for dashboard display
 4. **Real-Time Push**: The WebSocket Gateway queries DynamoDB and broadcasts updated statistics to all connected clients
 5. **Live Dashboard**: Browser clients receive updates via WebSocket and display live top-10 movies, connected user count, and recent activity
-
-### What the System Does NOT Do
-
-- **Authentication/Authorization**: The system assumes all users are trusted (no login required)
-- **Personalization**: All users see the same top-10 movies (no personalized recommendations)
-- **Historical Analytics**: The system stores only current view counts and recent activity (no time-series data warehouse)
-- **Multi-region Deployment**: The system is deployed in a single AWS region (no global distribution)
 
 ---
 
@@ -123,95 +100,17 @@ The system uses **WebSocket** for real-time push notifications instead of pollin
 
 ---
 
-## Report Structure
-
-This scientific report analyzes the Realtime Analytics Dashboard system from multiple perspectives:
-
-1. **Architecture** (Section 1): System design, components, data models, and correctness properties
-2. **Communication** (Section 2): Justification for sync vs async communication patterns
-3. **Consistency** (Section 3): CAP theorem analysis and consistency guarantees
-4. **Resilience** (Section 4): Failure modes, recovery mechanisms, and chaos engineering tests
-5. **Performance & Scalability** (Section 5): Load testing results, latency analysis, and bottleneck identification
-6. **Real Systems Comparison** (Section 6): Comparison with Netflix, Twitter, and Uber architectures
-
-Each section includes:
-- **Theoretical analysis**: Principles and trade-offs
-- **Practical implementation**: Code examples and design decisions
-- **Empirical validation**: Load testing results and metrics
-- **Recommendations**: Production deployment guidance
-
----
-
-## Contributions
-
-This project demonstrates:
-
-- **Practical application** of distributed systems principles (CAP theorem, eventual consistency, idempotency)
-- **Real-world patterns** used by major technology companies (event-driven architecture, asynchronous processing, backpressure)
-- **Rigorous validation** through property-based testing and load testing
-- **Production-ready design** with error handling, monitoring, and resilience patterns
-
-The system is not just a proof-of-concept; it is a working, tested, and documented system that could be deployed to production with minimal additional work (upgrading MongoDB Atlas, adding multi-instance deployment, etc.).
-
----
-
-## Audience
-
-This report is intended for:
-
-- **University instructors and evaluators**: To assess understanding of distributed systems principles
-- **Peer students**: To learn from the design decisions and implementation patterns
-- **Industry professionals**: To see how academic concepts apply to real-world systems
-
-The report assumes familiarity with:
-- Basic distributed systems concepts (CAP theorem, eventual consistency)
-- Cloud services (AWS SQS, Lambda, DynamoDB)
-- Web technologies (HTTP, WebSocket, REST APIs)
-- JavaScript/Node.js programming
-
----
-
-## Reading Guide
-
-**For a quick overview**: Read the Architecture section (Section 1) and Performance & Scalability section (Section 5)
-
-**For deep technical analysis**: Read all sections in order (1–6)
-
-**For production deployment**: Focus on Resilience (Section 4) and Real Systems Comparison (Section 6)
-
-**For academic understanding**: Focus on Consistency (Section 3) and Communication (Section 2)
-
----
-
-## Acknowledgments
-
-This project was built using:
-- **AWS Services**: SQS, Lambda, DynamoDB, ECS Fargate, CloudWatch
-- **Open Source Libraries**: Fastify, Node.js, ws (WebSocket), fast-check (property-based testing), Artillery (load testing)
-- **Course Materials**: Lectures and labs on distributed systems, cloud computing, and event-driven architectures
-
-The system design was informed by:
-- Netflix's event-driven architecture (Kafka, Flink)
-- Twitter's real-time feed system (WebSocket, caching)
-- Uber's location tracking system (event streaming, real-time processing)
-
----
-
-This report is organized to provide both breadth (covering all required topics) and depth (with detailed analysis and recommendations). Each section can be read independently, but together they provide a comprehensive analysis of a modern distributed system.
-
----
-
 # System Architecture
 
 ## 1.1 Overview
 
 The Realtime Analytics Dashboard is a cloud-native distributed system designed to collect, process, and visualize movie-view events in real time. The system is composed of four independently deployed components that communicate asynchronously through AWS-managed services, ensuring loose coupling, scalability, and resilience.
 
-The architecture follows the **event-driven microservices pattern**, where each component has a single responsibility and communicates through well-defined interfaces. This design satisfies the university assignment requirements for:
-- Minimum 3 independently deployed services ✓ (Service A, Event Processor, WebSocket Gateway)
-- Minimum 3 AWS-native services ✓ (SQS, Lambda, DynamoDB)
-- At least one FaaS component ✓ (AWS Lambda)
-- Real-time communication technology ✓ (WebSocket)
+The architecture follows the **event-driven microservices pattern**, where each component has a single responsibility and communicates through well-defined interfaces. This design satisfies the assignment requirements for:
+- Minimum 3 independently deployed services (Service A, Event Processor, WebSocket Gateway)
+- Minimum 3 AWS-native services (SQS, Lambda, DynamoDB)
+- At least one FaaS component (AWS Lambda)
+- Real-time communication technology (WebSocket)
 
 ## 1.2 Component Diagram
 
@@ -329,9 +228,11 @@ The architecture follows the **event-driven microservices pattern**, where each 
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## 1.3 Data Flow Sequence
+## 1.3 Data Flow Sequence — Main Flow
 
-### Main Flow: Movie View → Dashboard Update
+### Movie View → Dashboard Update
+
+The following sequence diagram shows the complete data flow from when a user views a movie to when the dashboard updates:
 
 ```
 Time  Actor              Action                          Details
@@ -346,7 +247,7 @@ T3    Service A          Publish View_Event to SQS       Fire-and-forget (async)
                          {
                            schemaVersion: "1.0",
                            requestId: UUID,
-                           movieId: "tt0111161",
+                           movieId: "573a13d3f29313caabd9473c",
                            publishedAt: ISO8601_UTC
                          }
       
@@ -364,8 +265,8 @@ T8    Lambda             Atomic counter increment        UpdateItem MovieStats
       
 T9    Lambda             Notify Gateway                  HTTP POST /internal/notify
                          {
-                           movieId: "tt0111161",
-                           viewCount: 4821,
+                           movieId: "573a13d3f29313caabd9473c",
+                           viewCount: 1478,
                            publishedAt: ISO8601_UTC
                          }
       
@@ -391,6 +292,37 @@ T15   Browser Client     Update DOM                      Render new top-10, upda
 ────────────────────────────────────────────────────────────────────────────
 End-to-End Latency: T0 → T15 (typically 200–500 ms under normal load)
 ```
+
+**Key observations**:
+
+1. **T0 → T2**: HTTP request/response (45 ms typical)
+   - Service A fetches movie from MongoDB
+   - Returns immediately to client
+
+2. **T3**: Fire-and-forget SQS publish (5 ms)
+   - Does NOT block HTTP response
+   - Happens asynchronously in background
+
+3. **T4 → T5**: SQS buffering and polling (100–200 ms)
+   - SQS event source mapping polls every 20 seconds
+   - Batches up to 10 messages per Lambda invocation
+
+4. **T6 → T9**: Lambda processing (50–100 ms)
+   - Idempotency check (10 ms)
+   - DynamoDB write (8 ms)
+   - HTTP POST to Gateway (10 ms)
+
+5. **T10 → T12**: Gateway processing (50 ms)
+   - Query DynamoDB for top-10 (10 ms)
+   - Broadcast to all clients (40 ms)
+
+6. **T13 → T15**: Browser rendering (10–50 ms)
+   - Receive WebSocket message
+   - Update DOM and chart
+
+**Total end-to-end latency**: ~200–500 ms (well within the 500 ms target)
+
+---
 
 ## 1.4 Component Responsibilities
 
@@ -482,7 +414,7 @@ This approach is safe and efficient: no read-before-write, no optimistic locking
 
 ---
 
-## 1.5 Data Models
+## 1.4 Data Models
 
 ### DynamoDB: MovieStats Table
 
@@ -530,7 +462,7 @@ This approach is safe and efficient: no read-before-write, no optimistic locking
 | `pk` | String (PK) | Partition key: `ACTIVITY#YYYY-MM-DD` | `"ACTIVITY#2025-07-14"` |
 | `viewedAt` | Number (SK) | Sort key: epoch milliseconds (descending) | `1752518625000` |
 | `movieId` | String | Movie that was viewed | `"tt0111161"` |
-| `title` | String | Movie title | `"The Shawshank Redemption"` |
+| `title` | String | Movie title | `"The Shawshank w"` |
 | `ttl` | Number | Unix epoch seconds; DynamoDB TTL attribute | `1752604625` (now + 86400) |
 
 **Access Pattern**: Query by date partition (`pk = "ACTIVITY#2025-07-14"`) sorted by `viewedAt` descending
@@ -709,17 +641,6 @@ WebSocket provides bidirectional, low-latency communication:
 2. **SQS visibility timeout**: Set to 60s (exceeds Lambda 30s timeout) to prevent message redelivery during processing.
 3. **DynamoDB GSI**: Top-10 query on `viewCount` GSI is efficient (< 10 ms). No bottleneck expected.
 4. **WebSocket Gateway**: In-memory connection registry limits to single instance. Mitigation: use Redis for distributed connection registry.
-
----
-
-This completes the **Architecture Section** of your scientific report. It covers:
-✓ System overview and component diagram
-✓ Data flow sequence
-✓ Component responsibilities
-✓ Data models (DynamoDB, SQS, WebSocket messages)
-✓ Deployment architecture
-✓ Key architectural principles
-✓ Scalability considerations
 
 ---
 
@@ -1119,21 +1040,7 @@ function connectWebSocket() {
 
 ---
 
-## 2.3 Communication Matrix
-
-| From | To | Protocol | Type | Latency | Reliability | Coupling |
-|---|---|---|---|---|---|---|
-| Browser | Service A | HTTP | Sync | < 200 ms | High (HTTP retries) | Tight |
-| Service A | Event Processor | SQS | Async | 100–500 ms | Very High (at-least-once) | Loose |
-| Event Processor | DynamoDB | DynamoDB API | Sync | < 10 ms | Very High (99.99% SLA) | Tight |
-| Event Processor | Gateway | HTTP POST | Sync | < 10 ms | High (3 retries) | Tight |
-| Gateway | DynamoDB | DynamoDB API | Sync | < 10 ms | Very High (99.99% SLA) | Tight |
-| Gateway | Browser | WebSocket | Async | < 100 ms | Medium (reconnect logic) | Loose |
-| Browser | Gateway | WebSocket | Async | < 100 ms | Medium (reconnect logic) | Loose |
-
----
-
-## 2.4 Consistency Model Implications
+## 2.3 Consistency Model Implications
 
 ### Eventual Consistency
 
@@ -1152,7 +1059,7 @@ The system uses **eventual consistency** for view counts:
 
 ---
 
-## 2.5 Failure Scenarios and Communication Resilience
+## 2.4 Failure Scenarios and Communication Resilience
 
 ### Scenario 1: Event Processor Unavailable
 
@@ -1201,25 +1108,6 @@ The system uses **eventual consistency** for view counts:
 4. When Gateway recovers, browser reconnects and receives `initial_state` message
 
 **Resilience**: ✓ High. Client automatically reconnects; no manual intervention needed.
-
----
-
-## 2.6 Summary: Communication Design Decisions
-
-| Decision | Rationale | Trade-off |
-|---|---|---|
-| **Service A → Event Processor: Async (SQS)** | Loose coupling, buffering, reliability | Eventual consistency (200–500 ms delay) |
-| **Event Processor → DynamoDB: Sync** | Atomic operations, fast, managed service | Tight coupling, synchronous failure |
-| **Event Processor → Gateway: Sync (HTTP)** | Low latency, simple, self-healing | Tight coupling, retry logic needed |
-| **Gateway → DynamoDB: Sync** | Fast queries, sorted results, managed service | Tight coupling, synchronous failure |
-| **Gateway → Browser: Async (WebSocket)** | Low latency push, no polling, bidirectional | Loose consistency, reconnection logic |
-
-**Overall**: The system uses a **hybrid model** optimized for each interaction:
-- **Asynchronous** where loose coupling and buffering are valuable (Service A → Event Processor)
-- **Synchronous** where latency and atomicity are critical (Event Processor → DynamoDB, Gateway → DynamoDB)
-- **Real-time push** where low latency and user experience matter (Gateway → Browser)
-
-This design balances **latency**, **reliability**, **coupling**, and **scalability** for the specific requirements of a real-time analytics dashboard.
 
 ---
 
@@ -1711,21 +1599,6 @@ cloudwatch.putMetricData({
   ]
 });
 ```
-
----
-
-## 3.11 Summary: Consistency Analysis
-
-| Aspect | Decision | Rationale |
-|---|---|---|
-| **CAP Choice** | AP (Availability + Partition Tolerance) | Analytics dashboard prioritizes availability over consistency |
-| **Consistency Model** | Eventual Consistency | 200–500 ms window acceptable for dashboard |
-| **Atomic Operations** | DynamoDB ADD (per-operation atomicity) | Prevents data races on concurrent increments |
-| **Idempotency** | ProcessedEvents table with TTL | Handles SQS at-least-once delivery |
-| **Monotonicity** | Gateway queries fresh DynamoDB state | Ensures view counts never decrease |
-| **Failure Handling** | Graceful degradation | Components fail independently; no cascading failures |
-
-**Conclusion**: The system achieves a good balance between **consistency**, **availability**, and **partition tolerance** for the specific use case of a real-time analytics dashboard. Eventual consistency with strong per-operation guarantees provides the necessary reliability while maintaining high availability and loose coupling.
 
 ---
 
@@ -3259,9 +3132,7 @@ We hope this report provides value not just as a university assignment, but as a
 ## References
 
 ### Course Materials
-- Distributed Systems lectures (Weeks 1–10)
-- Cloud Computing labs (Weeks 4–8)
-- Event-Driven Architecture patterns (Week 6)
+- Courses and Laboratory material (PCD)
 
 ### External Resources
 - AWS Documentation: SQS, Lambda, DynamoDB, ECS Fargate
